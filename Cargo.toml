@@ -1,0 +1,43 @@
+[package]
+name = "snapfind"
+version = "0.1.0"
+description = "Fast file search tool that understands content."
+edition = "2024"
+authors = ["Success Kingsley <hello@xosnrdev.tech>"]
+license = "MIT"
+repository = "https://github.com/xosnrdev/snapfind"
+homepage = "https://github.com/xosnrdev/snapfind#readme"
+readme = "README.md"
+keywords = ["search", "files", "semantic", "finder"]
+categories = ["command-line-utilities", "filesystem"]
+
+[dependencies]
+arrayvec = { version = "0.7.6", default-features = false }
+clap = { version = "4.5.31", features = ["derive", "wrap_help"] }
+clap-cargo = { version = "0.15.2", features = [
+    "clap",
+], default-features = false }
+static-str = { version = "0.2.0", default-features = false }
+thiserror = { version = "1.0.69", default-features = false }
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+opt-level = 3
+debug = false
+incremental = false
+overflow-checks = false
+rpath = false
+debug-assertions = false
+
+[profile.dev]
+debug-assertions = true
+overflow-checks = true
+
+[dev-dependencies]
+tempfile = "3.18.0"
+
+[package.metadata]
+codegen-units-std = 1
