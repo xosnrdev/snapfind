@@ -41,3 +41,7 @@ tempfile = "3.18.0"
 
 [package.metadata]
 codegen-units-std = 1
+
+[[bin]]
+name = "snap"
+path = "src/main.rs"

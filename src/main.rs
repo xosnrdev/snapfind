@@ -29,7 +29,7 @@ static ALLOCATOR: TrackingAllocator = TrackingAllocator::new();
 
 /// CLI arguments for `SnapFind`
 #[derive(Parser, Debug)]
-#[command(author, version, about, styles = CLAP_STYLING)]
+#[command(author, version, about, display_name="", styles = CLAP_STYLING)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -173,7 +173,7 @@ fn search_files(query: &str, dir: &Path) -> Result<()> {
     let index_path = get_index_path(dir);
     if !index_path.exists() {
         return Err(Error::Search(format!(
-            "No index found for {}. Run 'snapfind index' first.",
+            "No index found for {}. Run 'snap index' first.",
             dir.display()
         )));
     }
