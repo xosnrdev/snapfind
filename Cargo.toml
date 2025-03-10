@@ -4,12 +4,12 @@ version = "0.1.0"
 description = "Fast file search tool that understands content."
 edition = "2024"
 authors = ["Success Kingsley <hello@xosnrdev.tech>"]
-license = "MIT"
-repository = "https://github.com/xosnrdev/snapfind"
-homepage = "https://github.com/xosnrdev/snapfind#readme"
-readme = "README.md"
-keywords = ["search", "files", "semantic", "finder"]
-categories = ["command-line-utilities", "filesystem"]
+# license = "MIT"
+# repository = "https://github.com/xosnrdev/snapfind"
+# homepage = "https://github.com/xosnrdev/snapfind#readme"
+# readme = "README.md"
+# keywords = ["search", "files", "semantic", "finder"]
+# categories = ["command-line-utilities", "filesystem"]
 
 [dependencies]
 arrayvec = { version = "0.7.6", default-features = false }

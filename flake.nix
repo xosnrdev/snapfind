@@ -11,19 +11,19 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
-        manifest = pkgs.lib.importTOML ./Cargo.toml;
-        package = manifest.package;
-        snapfind = pkgs.rustPlatform.buildRustPackage {
-          pname = package.name;
-          version = package.version;
-          src = pkgs.lib.cleanSource ./.;
-          cargoLock.lockFile = ./Cargo.lock;
-          meta = with pkgs.lib; {
-            inherit (package) description homepage repository;
-            license = licenses.mit;
-            maintainers = [ maintainers.xosnrdev ];
-          };
-        };
+        # manifest = pkgs.lib.importTOML ./Cargo.toml;
+        # package = manifest.package;
+        # snapfind = pkgs.rustPlatform.buildRustPackage {
+        #   pname = package.name;
+        #   version = package.version;
+        #   src = pkgs.lib.cleanSource ./.;
+        #   cargoLock.lockFile = ./Cargo.lock;
+        #   meta = with pkgs.lib; {
+        #     inherit (package) description homepage repository;
+        #     license = licenses.mit;
+        #     maintainers = [ maintainers.xosnrdev ];
+        #   };
+        # };
 
         devShell = pkgs.mkShell {
           buildInputs = [
@@ -42,7 +42,7 @@
 
       in {
         formatter = pkgs.nixfmt-classic;
-        packages = { default = snapfind; };
+        # packages = { default = snapfind; };
         devShells.default = devShell;
       });
 }
