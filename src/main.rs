@@ -6,7 +6,7 @@
     clippy::pedantic,
     clippy::nursery
 )]
-//! `SnapFind` - A simple file finder for linux
+//! `SnapFind` - Fast file search tool that understands content.
 
 mod alloc;
 mod crawler;
