@@ -131,9 +131,8 @@ fn index_directory(dir: &Path) -> Result<()> {
     // Final status
     if total_files == 0 {
         if had_errors {
-            return Err(Error::Search(
-                "Failed to index any files due to errors. Check file permissions and try again."
-                    .into(),
+            return Err(Error::search(
+                "Failed to index any files due to errors. Check file permissions and try again.",
             ));
         }
         println!("No files were indexed. Make sure the directory contains text files.");
@@ -163,16 +162,16 @@ fn search_files(query: &str, dir: &Path) -> Result<()> {
 
     // Validate directory
     if !dir.exists() {
-        return Err(Error::Search(format!("Directory not found: {}", dir.display())));
+        return Err(Error::search(&format!("Directory not found: {}", dir.display())));
     }
     if !dir.is_dir() {
-        return Err(Error::Search(format!("Not a directory: {}", dir.display())));
+        return Err(Error::search(&format!("Not a directory: {}", dir.display())));
     }
 
     // Load the index
     let index_path = get_index_path(dir);
     if !index_path.exists() {
-        return Err(Error::Search(format!(
+        return Err(Error::search(&format!(
             "No index found for {}. Run 'snap index' first.",
             dir.display()
         )));
@@ -219,20 +218,20 @@ fn main() {
     let result = match cli.command {
         Command::Index { dir } => {
             if !dir.exists() {
-                Err(Error::Search(format!("Directory not found: {}", dir.display())))
+                Err(Error::search(&format!("Directory not found: {}", dir.display())))
             } else if !dir.is_dir() {
-                Err(Error::Search(format!("Not a directory: {}", dir.display())))
+                Err(Error::search(&format!("Not a directory: {}", dir.display())))
             } else {
                 index_directory(&dir)
             }
         },
         Command::Search { query, dir } => {
             if !dir.exists() {
-                Err(Error::Search(format!("Directory not found: {}", dir.display())))
+                Err(Error::search(&format!("Directory not found: {}", dir.display())))
             } else if !dir.is_dir() {
-                Err(Error::Search(format!("Not a directory: {}", dir.display())))
+                Err(Error::search(&format!("Not a directory: {}", dir.display())))
             } else if query.is_empty() {
-                Err(Error::Search("Search query cannot be empty".into()))
+                Err(Error::search("Search query cannot be empty"))
             } else {
                 search_files(&query, &dir)
             }

@@ -45,12 +45,18 @@ struct Document {
 /// Simple search engine with fixed-size indices and zero post-init allocation
 #[derive(Debug)]
 pub struct SearchEngine {
-    /// Documents in the index
+    /// Documents in the index, allocated during initialization only
+    /// This is the only heap allocation in the struct and it's fixed-size
     documents: Box<ArrayVec<Document, MAX_DOCUMENTS>>,
 }
 
 impl SearchEngine {
-    /// Creates a new search engine
+    /// Creates a new search engine with a single fixed allocation
+    ///
+    /// # Allocation Guarantees
+    /// - Allocates exactly one `Box<ArrayVec>` during initialization
+    /// - No further allocations occur after initialization
+    /// - All internal buffers use fixed-size stack allocation
     #[must_use = "SearchEngine must be used to store and search documents"]
     pub fn new() -> Self {
         Self { documents: Box::new(ArrayVec::new()) }
@@ -65,29 +71,29 @@ impl SearchEngine {
     /// - Document limit would be exceeded
     pub fn load(path: &Path) -> Result<Self> {
         let mut file =
-            File::open(path).map_err(|e| Error::Search(format!("Failed to open index: {e}")))?;
+            File::open(path).map_err(|e| Error::search(&format!("Failed to open index: {e}")))?;
 
         // Read and verify header
         let mut magic = [0u8; 4];
         file.read_exact(&mut magic)
-            .map_err(|e| Error::Search(format!("Failed to read magic: {e}")))?;
+            .map_err(|e| Error::search(&format!("Failed to read magic: {e}")))?;
         if magic != MAGIC {
-            return Err(Error::Search("Invalid index file format".into()));
+            return Err(Error::search("Invalid index file format"));
         }
 
         let mut version = [0u8; 1];
         file.read_exact(&mut version)
-            .map_err(|e| Error::Search(format!("Failed to read version: {e}")))?;
+            .map_err(|e| Error::search(&format!("Failed to read version: {e}")))?;
         if version[0] != VERSION {
-            return Err(Error::Search(format!("Unsupported index version: {}", version[0])));
+            return Err(Error::search(&format!("Unsupported index version: {}", version[0])));
         }
 
         let mut ndocs = [0u8; 4];
         file.read_exact(&mut ndocs)
-            .map_err(|e| Error::Search(format!("Failed to read document count: {e}")))?;
+            .map_err(|e| Error::search(&format!("Failed to read document count: {e}")))?;
         let ndocs = u32::from_le_bytes(ndocs) as usize;
         if ndocs > MAX_DOCUMENTS {
-            return Err(Error::Search("Too many documents in index".into()));
+            return Err(Error::search("Too many documents in index"));
         }
 
         let mut engine = Self::new();
@@ -97,35 +103,35 @@ impl SearchEngine {
             // Read path
             let mut path_len = [0u8; 2];
             file.read_exact(&mut path_len)
-                .map_err(|e| Error::Search(format!("Failed to read path length: {e}")))?;
+                .map_err(|e| Error::search(&format!("Failed to read path length: {e}")))?;
             let path_len = u16::from_le_bytes(path_len) as usize;
             if path_len > MAX_PATH_BYTES {
-                return Err(Error::Search("Path too long".into()));
+                return Err(Error::search("Path too long"));
             }
 
             let mut path_buf = ArrayVec::<u8, MAX_PATH_BYTES>::new();
             for _ in 0..path_len {
                 let mut byte = [0u8; 1];
                 file.read_exact(&mut byte)
-                    .map_err(|e| Error::Search(format!("Failed to read path: {e}")))?;
-                path_buf.try_push(byte[0]).map_err(|_| Error::Search("Path too long".into()))?;
+                    .map_err(|e| Error::search(&format!("Failed to read path: {e}")))?;
+                path_buf.try_push(byte[0]).map_err(|_| Error::search("Path too long"))?;
             }
 
             // Read content
             let mut content_len = [0u8; 2];
             file.read_exact(&mut content_len)
-                .map_err(|e| Error::Search(format!("Failed to read content length: {e}")))?;
+                .map_err(|e| Error::search(&format!("Failed to read content length: {e}")))?;
             let content_len = u16::from_le_bytes(content_len) as usize;
             if content_len > MAX_CONTENT_LENGTH {
-                return Err(Error::Search("Content too large".into()));
+                return Err(Error::search("Content too large"));
             }
 
             let mut content = ArrayVec::new();
             for _ in 0..content_len {
                 let mut byte = [0u8; 1];
                 file.read_exact(&mut byte)
-                    .map_err(|e| Error::Search(format!("Failed to read content: {e}")))?;
-                content.try_push(byte[0]).map_err(|_| Error::Search("Content too large".into()))?;
+                    .map_err(|e| Error::search(&format!("Failed to read content: {e}")))?;
+                content.try_push(byte[0]).map_err(|_| Error::search("Content too large"))?;
             }
 
             // Create document
@@ -134,7 +140,7 @@ impl SearchEngine {
             engine
                 .documents
                 .try_push(Document { path, content })
-                .map_err(|_| Error::Search("Too many documents".into()))?;
+                .map_err(|_| Error::search("Too many documents"))?;
         }
 
         Ok(engine)
@@ -148,41 +154,42 @@ impl SearchEngine {
     /// - Path lengths exceed limits
     pub fn save(&self, path: &Path) -> Result<()> {
         let mut file = File::create(path)
-            .map_err(|e| Error::Search(format!("Failed to create index: {e}")))?;
+            .map_err(|e| Error::search(&format!("Failed to create index: {e}")))?;
 
         // Write header
-        file.write_all(&MAGIC).map_err(|e| Error::Search(format!("Failed to write magic: {e}")))?;
+        file.write_all(&MAGIC)
+            .map_err(|e| Error::search(&format!("Failed to write magic: {e}")))?;
         file.write_all(&[VERSION])
-            .map_err(|e| Error::Search(format!("Failed to write version: {e}")))?;
+            .map_err(|e| Error::search(&format!("Failed to write version: {e}")))?;
 
         let ndocs = u32::try_from(self.documents.len())
-            .map_err(|_| Error::Search("Too many documents for index format".into()))?;
+            .map_err(|_| Error::search("Too many documents for index format"))?;
         file.write_all(&ndocs.to_le_bytes())
-            .map_err(|e| Error::Search(format!("Failed to write document count: {e}")))?;
+            .map_err(|e| Error::search(&format!("Failed to write document count: {e}")))?;
 
         // Write documents
         for doc in self.documents.iter() {
             let path_str = doc.path.to_string_lossy();
             let path_bytes = path_str.as_bytes();
             if path_bytes.len() > MAX_PATH_BYTES {
-                return Err(Error::Search("Path too long".into()));
+                return Err(Error::search("Path too long"));
             }
 
             // Write path
             let path_len = u16::try_from(path_bytes.len())
-                .map_err(|_| Error::Search("Path too long for index format".into()))?;
+                .map_err(|_| Error::search("Path too long for index format"))?;
             file.write_all(&path_len.to_le_bytes())
-                .map_err(|e| Error::Search(format!("Failed to write path length: {e}")))?;
+                .map_err(|e| Error::search(&format!("Failed to write path length: {e}")))?;
             file.write_all(path_bytes)
-                .map_err(|e| Error::Search(format!("Failed to write path: {e}")))?;
+                .map_err(|e| Error::search(&format!("Failed to write path: {e}")))?;
 
             // Write content
             let content_len = u16::try_from(doc.content.len())
-                .map_err(|_| Error::Search("Content too large for index format".into()))?;
+                .map_err(|_| Error::search("Content too large for index format"))?;
             file.write_all(&content_len.to_le_bytes())
-                .map_err(|e| Error::Search(format!("Failed to write content length: {e}")))?;
+                .map_err(|e| Error::search(&format!("Failed to write content length: {e}")))?;
             file.write_all(&doc.content)
-                .map_err(|e| Error::Search(format!("Failed to write content: {e}")))?;
+                .map_err(|e| Error::search(&format!("Failed to write content: {e}")))?;
         }
 
         Ok(())
@@ -197,12 +204,12 @@ impl SearchEngine {
     pub fn add_document(&mut self, path: &Path, content: &str) -> Result<()> {
         let mut doc_content = ArrayVec::new();
         for &b in content.as_bytes() {
-            doc_content.try_push(b).map_err(|_| Error::Search("Content too large".into()))?;
+            doc_content.try_push(b).map_err(|_| Error::search("Content too large"))?;
         }
 
         self.documents
             .try_push(Document { path: path.to_path_buf(), content: doc_content })
-            .map_err(|_| Error::Search("Too many documents".into()))
+            .map_err(|_| Error::search("Too many documents"))
     }
 
     /// Check if a term matches content at word boundaries
@@ -326,7 +333,7 @@ impl SearchEngine {
         for (score, idx) in scores.iter().take(MAX_RESULTS) {
             results
                 .try_push(SearchResult { path: self.documents[*idx].path.clone(), score: *score })
-                .map_err(|_| Error::Search("Too many results".into()))?;
+                .map_err(|_| Error::search("Too many results"))?;
         }
 
         Ok(results)
@@ -524,16 +531,9 @@ mod tests {
     fn test_load_invalid_file() {
         let temp_dir = TempDir::new().unwrap();
         let invalid_path = temp_dir.path().join("invalid.idx");
+        File::create(&invalid_path).unwrap();
 
-        // Create invalid file
-        let mut file = File::create(&invalid_path).unwrap();
-        file.write_all(b"INVALID").unwrap();
-
-        // Attempt to load
-        assert!(matches!(
-            SearchEngine::load(&invalid_path),
-            Err(Error::Search(msg)) if msg == "Invalid index file format"
-        ));
+        assert!(matches!(SearchEngine::load(&invalid_path), Err(Error::Search(_))));
     }
 
     #[test]

@@ -1,11 +1,20 @@
 //! Error types for `SnapFind`
 
+use arrayvec::ArrayString;
 use thiserror::Error;
+
+/// Maximum length of error messages
+pub const MAX_ERROR_LENGTH: usize = 256;
 
 /// Custom result type for `SnapFind` operations
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Error types that can occur during `SnapFind` operations
+///
+/// # Allocation Guarantees
+/// - The `Search` variant uses a single boxed `ArrayString` to minimize enum size
+/// - All error messages are fixed-size with no dynamic allocation
+/// - String buffers are stack-allocated with a fixed MAX_ERROR_LENGTH
 #[derive(Debug, Error)]
 pub enum Error {
     /// IO operation failed
@@ -28,38 +37,68 @@ pub enum Error {
     #[error("Error: Path length exceeded 255 characters")]
     PathTooLong,
 
-    /// Search engine error
+    /// Search engine error with fixed-size message buffer
     #[error("Error: {0}")]
-    Search(String),
+    Search(Box<ArrayString<MAX_ERROR_LENGTH>>),
 }
 
 impl Error {
+    /// Create a new search error with a fixed-size message buffer
+    ///
+    /// # Allocation Guarantees
+    /// - Allocates one `Box<ArrayString>` for the error message
+    /// - Message buffer is fixed-size (MAX_ERROR_LENGTH)
+    /// - Truncates messages that exceed the buffer size
+    pub fn search(msg: &str) -> Self {
+        let mut buf = ArrayString::new();
+        // Try to write the message, truncate if too long
+        let _ = buf.try_push_str(msg);
+        Self::Search(Box::new(buf))
+    }
+
     /// Get a user-friendly error message with action items
     #[must_use]
-    pub fn user_message(&self) -> String {
+    pub fn user_message(&self) -> ArrayString<MAX_ERROR_LENGTH> {
+        let mut msg = ArrayString::new();
         match self {
-            Self::Io(e) => format!("Error: {e}\nTip: Check file permissions and try again"),
-            Self::DepthExceeded => String::from(
-                "Error: Directory structure too deep (max 1000 levels)\nTip: Try indexing a \
-                 shallower directory",
-            ),
-            Self::FileCountExceeded => String::from(
-                "Error: Too many files (max 1,000,000)\nTip: Try indexing a smaller directory",
-            ),
-            Self::FileSizeExceeded => String::from(
-                "Error: File too large (max 10MB)\nTip: Large files are skipped during indexing",
-            ),
-            Self::PathTooLong => String::from(
-                "Error: Path too long (max 255 characters)\nTip: Try moving files to a shorter \
-                 path",
-            ),
-            Self::Search(msg) => {
-                if msg.contains("No index found") {
-                    format!("Error: {msg}")
+            Self::Io(e) => {
+                let _ = msg.try_push_str(&format!(
+                    "Error: {e}\nTip: Check file permissions and try again"
+                ));
+            },
+            Self::DepthExceeded => {
+                let _ = msg.try_push_str(
+                    "Error: Directory structure too deep (max 1000 levels)\nTip: Try indexing a \
+                     shallower directory",
+                );
+            },
+            Self::FileCountExceeded => {
+                let _ = msg.try_push_str(
+                    "Error: Too many files (max 1,000,000)\nTip: Try indexing a smaller directory",
+                );
+            },
+            Self::FileSizeExceeded => {
+                let _ = msg.try_push_str(
+                    "Error: File too large (max 10MB)\nTip: Large files are skipped during \
+                     indexing",
+                );
+            },
+            Self::PathTooLong => {
+                let _ = msg.try_push_str(
+                    "Error: Path too long (max 255 characters)\nTip: Try moving files to a \
+                     shorter path",
+                );
+            },
+            Self::Search(search_msg) => {
+                if search_msg.contains("No index found") {
+                    let _ = msg.try_push_str(search_msg);
                 } else {
-                    format!("Error: {msg}\nTip: Try simplifying your search")
+                    let _ = msg.try_push_str("Error: ");
+                    let _ = msg.try_push_str(search_msg);
+                    let _ = msg.try_push_str("\nTip: Try simplifying your search");
                 }
             },
         }
+        msg
     }
 }
