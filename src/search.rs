@@ -57,12 +57,18 @@ impl GlobMatcher {
     fn new(pattern: &str) -> Result<Self> {
         // Assert pattern is valid
         assert!(!pattern.is_empty(), "Pattern must not be empty");
-        assert!(pattern.len() <= MAX_TERM_LENGTH, "Pattern too long");
+        if pattern.len() > MAX_TERM_LENGTH {
+            return Err(Error::SearchTermTooLong);
+        }
 
         let mut matcher = Self { patterns: ArrayVec::new() };
 
         // Split pattern by whitespace and compile each part
         for part in pattern.split_whitespace() {
+            if matcher.patterns.len() >= MAX_PATTERNS {
+                return Err(Error::TooManyPatterns);
+            }
+
             // Handle glob patterns that don't start with *
             let pattern_str = if !part.starts_with('*') && part.contains('*') {
                 format!("*{part}")
@@ -79,7 +85,7 @@ impl GlobMatcher {
             matcher
                 .patterns
                 .try_push(glob.compile_matcher())
-                .map_err(|_| Error::search("Too many pattern parts"))?;
+                .map_err(|_| Error::TooManyPatterns)?;
         }
 
         // Assert we have at least one pattern
@@ -252,21 +258,29 @@ impl SearchEngine {
         Ok(())
     }
 
-    /// Add a document to the index
+    /// Add a document to the search index
     ///
     /// # Errors
-    /// Returns error if:
-    /// - Document limit exceeded
-    /// - Content too large
+    /// Returns error if document cannot be added
     pub fn add_document(&mut self, path: &Path, content: &str) -> Result<()> {
-        let mut doc_content = ArrayVec::new();
-        for &b in content.as_bytes() {
-            doc_content.try_push(b).map_err(|_| Error::search("Content too large"))?;
+        if content.len() > MAX_CONTENT_LENGTH {
+            return Err(Error::ContentTooLarge);
         }
+
+        if self.documents.len() >= MAX_DOCUMENTS {
+            return Err(Error::FileCountExceeded);
+        }
+
+        let mut doc_content = ArrayVec::new();
+        doc_content
+            .try_extend_from_slice(content.as_bytes())
+            .map_err(|_| Error::ContentTooLarge)?;
 
         self.documents
             .try_push(Document { path: path.to_path_buf(), content: doc_content })
-            .map_err(|_| Error::search("Too many documents"))
+            .map_err(|_| Error::FileCountExceeded)?;
+
+        Ok(())
     }
 
     /// Check if a term matches content at word boundaries

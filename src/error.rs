@@ -26,16 +26,28 @@ pub enum Error {
     DepthExceeded,
 
     /// File count exceeded the maximum limit
-    #[error("Error: Maximum file count of 1,000,000 exceeded")]
+    #[error("Error: Maximum file count of 100 exceeded (free tier limit)")]
     FileCountExceeded,
 
     /// File size exceeded the maximum limit
-    #[error("Error: Maximum file size of 10MB exceeded")]
+    #[error("Error: File size limit of 1KB exceeded (free tier limit)")]
     FileSizeExceeded,
 
     /// Path length exceeded the maximum limit
     #[error("Error: Path length exceeded 255 characters")]
     PathTooLong,
+
+    /// Content length exceeded the maximum limit
+    #[error("Error: Content length exceeded 1KB (free tier limit)")]
+    ContentTooLarge,
+
+    /// Pattern count exceeded the maximum limit
+    #[error("Error: Maximum of 10 search patterns exceeded")]
+    TooManyPatterns,
+
+    /// Search term too long
+    #[error("Error: Search term length exceeded 50 bytes")]
+    SearchTermTooLong,
 
     /// Search engine error with fixed-size message buffer
     #[error("Error: {0}")]
@@ -73,13 +85,31 @@ impl Error {
             },
             Self::FileCountExceeded => {
                 let _ = msg.try_push_str(
-                    "Error: Too many files (max 1,000,000)\nTip: Try indexing a smaller directory",
+                    "Error: Free tier limit of 100 files exceeded\nTip: Consider upgrading to \
+                     paid tier for unlimited files, or index a smaller directory",
                 );
             },
             Self::FileSizeExceeded => {
                 let _ = msg.try_push_str(
-                    "Error: File too large (max 10MB)\nTip: Large files are skipped during \
-                     indexing",
+                    "Error: File size exceeds free tier limit (1KB)\nTip: Large files are \
+                     skipped. Consider upgrading to paid tier for larger file support",
+                );
+            },
+            Self::ContentTooLarge => {
+                let _ = msg.try_push_str(
+                    "Error: Content exceeds free tier limit (1KB)\nTip: Consider upgrading to \
+                     paid tier for larger content support",
+                );
+            },
+            Self::TooManyPatterns => {
+                let _ = msg.try_push_str(
+                    "Error: Too many search patterns (max 10)\nTip: Simplify your search query by \
+                     using fewer patterns",
+                );
+            },
+            Self::SearchTermTooLong => {
+                let _ = msg.try_push_str(
+                    "Error: Search term too long (max 50 bytes)\nTip: Use shorter search terms",
                 );
             },
             Self::PathTooLong => {
@@ -91,6 +121,7 @@ impl Error {
             Self::Search(search_msg) => {
                 if search_msg.contains("No index found") {
                     let _ = msg.try_push_str(search_msg);
+                    let _ = msg.try_push_str("\nTip: Run 'snap index <directory>' first");
                 } else {
                     let _ = msg.try_push_str("Error: ");
                     let _ = msg.try_push_str(search_msg);
