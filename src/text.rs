@@ -211,76 +211,69 @@ impl TextDetector {
 
     /// Determines final validation result
     fn determine_result(&self) -> TextValidation {
-        // Calculate confidence score
-        let mut confidence: u8 = 100;
-
-        // Early return for likely binary content
-        if self.is_binary_header() || self.stats.null_bytes > 10 {
+        // Binary detection
+        if self.is_binary_header() || self.stats.null_bytes > 0 {
             return TextValidation::binary();
         }
 
-        // Penalize for problematic content
-        confidence =
-            confidence.saturating_sub(u8::try_from(self.stats.null_bytes).unwrap_or(255) * 10);
-        confidence =
-            confidence.saturating_sub(u8::try_from(self.stats.control_chars).unwrap_or(255) * 5);
-        confidence =
-            confidence.saturating_sub(u8::try_from(self.stats.utf8_errors).unwrap_or(255) * 20);
+        // Calculate confidence score (0-100)
+        let mut confidence = 100_u8;
 
-        // Heavy penalty for low ASCII ratio
-        if self.stats.ascii_ratio < 50 {
-            confidence = confidence.saturating_sub(50);
+        // Penalize for control characters
+        if self.stats.control_chars > 0 {
+            confidence =
+                confidence.saturating_sub(u8::try_from(self.stats.control_chars).unwrap_or(100));
         }
 
-        // Boost for good indicators
-        if self.stats.line_breaks > 0 {
-            confidence = confidence.saturating_add(10);
-        }
-        if self.stats.ascii_ratio > 90 {
-            confidence = confidence.saturating_add(30);
+        // Penalize for UTF-8 errors
+        if self.stats.utf8_errors > 0 {
+            confidence =
+                confidence.saturating_sub(u8::try_from(self.stats.utf8_errors * 10).unwrap_or(100));
         }
 
-        // Determine encoding based on content analysis
-        let encoding = if confidence < 50 {
-            TextEncoding::Unknown
-        } else if self.stats.utf8_errors == 0 {
-            TextEncoding::Utf8
+        // Require some line breaks for higher confidence
+        if self.stats.line_breaks < 2 {
+            confidence = confidence.saturating_sub(20);
+        }
+
+        // Require high ASCII ratio
+        if self.stats.ascii_ratio < 90 {
+            confidence = confidence.saturating_sub(90_u8.saturating_sub(self.stats.ascii_ratio));
+        }
+
+        // Determine MIME type
+        let mime_type = if self.stats.line_breaks == 0 {
+            TextMimeType::Plain
+        } else if self.sample_buf.starts_with(b"#!") || self.sample_buf.starts_with(b"<?") {
+            TextMimeType::Source
+        } else if self.sample_buf.starts_with(b"[")
+            || (self.sample_buf.starts_with(b"# ") && self.sample_buf.contains(&b'['))
+        {
+            // Config files often start with sections or comments
+            TextMimeType::Config
+        } else if self.sample_buf.starts_with(b"# ") || self.sample_buf.starts_with(b"## ") {
+            // Markdown headers
+            TextMimeType::Markdown
+        } else if self.sample_buf.contains(&b'#')
+            && (self.sample_buf.contains(&b'*')
+                || self.sample_buf.contains(&b'-')
+                || self.sample_buf.contains(&b'[')
+                || self.sample_buf.contains(&b'`'))
+        {
+            // Markdown with common markers
+            TextMimeType::Markdown
+        } else if self.sample_buf.contains(&b'{')
+            || self.sample_buf.contains(&b'}')
+            || self.sample_buf.contains(&b'=')
+            || self.sample_buf.contains(&b';')
+        {
+            // Source code with common syntax elements
+            TextMimeType::Source
         } else {
-            TextEncoding::Unknown
+            TextMimeType::Plain
         };
 
-        // Determine MIME type from content patterns
-        let mime_type = if confidence < 50 {
-            TextMimeType::Unknown
-        } else {
-            let sample = std::str::from_utf8(&self.sample_buf).unwrap_or("");
-
-            // Check for markdown indicators
-            if sample.starts_with('#') || sample.contains("\n#") || sample.contains("* ") {
-                TextMimeType::Markdown
-            }
-            // Check for source code indicators
-            else if sample.contains("fn ")
-                || sample.contains("pub ")
-                || sample.contains("class ")
-                || sample.contains("def ")
-            {
-                TextMimeType::Source
-            }
-            // Check for config file indicators
-            else if (sample.contains('=') || sample.contains(':'))
-                && sample.contains('[')
-                && sample.contains(']')
-            {
-                TextMimeType::Config
-            }
-            // Default to plain text
-            else {
-                TextMimeType::Plain
-            }
-        };
-
-        TextValidation { confidence, encoding, mime_type }
+        TextValidation { confidence: confidence.min(100), encoding: TextEncoding::Utf8, mime_type }
     }
 
     /// Checks for common binary file headers

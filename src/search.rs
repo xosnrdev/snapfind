@@ -63,9 +63,16 @@ impl GlobMatcher {
 
         // Split pattern by whitespace and compile each part
         for part in pattern.split_whitespace() {
-            let glob = globset::GlobBuilder::new(part)
+            // Handle glob patterns that don't start with *
+            let pattern_str = if !part.starts_with('*') && part.contains('*') {
+                format!("*{part}")
+            } else {
+                part.to_string()
+            };
+
+            let glob = globset::GlobBuilder::new(&pattern_str)
                 .case_insensitive(true)
-                .literal_separator(true)
+                .literal_separator(false) // Allow matching across path separators
                 .build()
                 .map_err(|e| Error::search(&format!("Invalid pattern: {e}")))?;
 
@@ -373,15 +380,22 @@ impl SearchEngine {
 
         // Create glob matcher for filename matching
         let glob_matcher = GlobMatcher::new(query)?;
+        let is_glob_query = query.contains('*');
 
         // Calculate scores and store document indices
         for (idx, doc) in self.documents.iter().enumerate() {
-            let mut score = Self::calculate_score(query, doc);
-
-            // Boost score for glob pattern matches
-            if glob_matcher.is_match(&doc.path) {
-                score = (score * 1.5).min(100.0);
-            }
+            let score = if is_glob_query {
+                // For glob patterns, only use glob matching
+                if glob_matcher.is_match(&doc.path) { 100.0 } else { 0.0 }
+            } else {
+                // For regular queries, use normal scoring with glob boost
+                let base_score = Self::calculate_score(query, doc);
+                if glob_matcher.is_match(&doc.path) {
+                    (base_score * 1.5).min(100.0)
+                } else {
+                    base_score
+                }
+            };
 
             if score > 0.0 {
                 scores
