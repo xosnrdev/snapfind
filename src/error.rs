@@ -9,12 +9,12 @@ pub const MAX_ERROR_LENGTH: usize = 256;
 /// Custom result type for `SnapFind` operations
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// Error types that can occur during `SnapFind` operations
+/// Error types for `SnapFind`
 ///
-/// # Allocation Guarantees
-/// - The `Search` variant uses a single boxed `ArrayString` to minimize enum size
-/// - All error messages are fixed-size with no dynamic allocation
-/// - String buffers are stack-allocated with a fixed MAX_ERROR_LENGTH
+/// # Design
+/// - All errors are stack-allocated
+/// - String buffers are stack-allocated with a fixed `MAX_ERROR_LENGTH`
+/// - No heap allocation during error handling
 #[derive(Debug, Error)]
 pub enum Error {
     /// IO operation failed
@@ -43,12 +43,11 @@ pub enum Error {
 }
 
 impl Error {
-    /// Create a new search error with a fixed-size message buffer
+    /// Create a new search error
     ///
-    /// # Allocation Guarantees
-    /// - Allocates one `Box<ArrayString>` for the error message
-    /// - Message buffer is fixed-size (MAX_ERROR_LENGTH)
-    /// - Truncates messages that exceed the buffer size
+    /// # Design
+    /// - Message buffer is fixed-size (`MAX_ERROR_LENGTH`)
+    /// - No heap allocation
     pub fn search(msg: &str) -> Self {
         let mut buf = ArrayString::new();
         // Try to write the message, truncate if too long

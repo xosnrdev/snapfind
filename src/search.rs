@@ -18,9 +18,6 @@ pub const MAX_DOCUMENTS: usize = 100;
 /// Maximum length of stored content in bytes
 pub const MAX_CONTENT_LENGTH: usize = 1_000;
 
-/// Maximum number of terms in a query
-pub const MAX_QUERY_TERMS: usize = 10;
-
 /// Maximum term length in bytes
 pub const MAX_TERM_LENGTH: usize = 50;
 
@@ -33,13 +30,66 @@ pub const MAGIC: [u8; 4] = *b"SNAP";
 /// Index file version
 pub const VERSION: u8 = 1;
 
+/// Maximum number of glob patterns to compile
+pub const MAX_PATTERNS: usize = 10;
+
 /// Document in the search index with fixed-size buffers
 #[derive(Debug)]
-struct Document {
+pub struct Document {
     /// Path to the document
-    path:    PathBuf,
+    pub path:    PathBuf,
     /// Content of the document as raw bytes
-    content: ArrayVec<u8, MAX_CONTENT_LENGTH>,
+    pub content: ArrayVec<u8, MAX_CONTENT_LENGTH>,
+}
+
+/// Glob pattern matcher with fixed-size buffers
+#[derive(Debug)]
+struct GlobMatcher {
+    /// Compiled glob patterns
+    patterns: ArrayVec<globset::GlobMatcher, MAX_PATTERNS>,
+}
+
+impl GlobMatcher {
+    /// Create a new glob matcher
+    ///
+    /// # Errors
+    /// Returns error if pattern is invalid
+    fn new(pattern: &str) -> Result<Self> {
+        // Assert pattern is valid
+        assert!(!pattern.is_empty(), "Pattern must not be empty");
+        assert!(pattern.len() <= MAX_TERM_LENGTH, "Pattern too long");
+
+        let mut matcher = Self { patterns: ArrayVec::new() };
+
+        // Split pattern by whitespace and compile each part
+        for part in pattern.split_whitespace() {
+            let glob = globset::GlobBuilder::new(part)
+                .case_insensitive(true)
+                .literal_separator(true)
+                .build()
+                .map_err(|e| Error::search(&format!("Invalid pattern: {e}")))?;
+
+            matcher
+                .patterns
+                .try_push(glob.compile_matcher())
+                .map_err(|_| Error::search("Too many pattern parts"))?;
+        }
+
+        // Assert we have at least one pattern
+        assert!(!matcher.patterns.is_empty(), "Must have at least one pattern");
+
+        Ok(matcher)
+    }
+
+    /// Check if a path matches any pattern
+    fn is_match(&self, path: &Path) -> bool {
+        // Assert path is valid
+        assert!(path.as_os_str().len() <= MAX_PATH_BYTES, "Path too long");
+
+        // Convert path to string for matching, return false for invalid UTF-8
+        path.to_str()
+            .is_some_and(|path_str| self.patterns.iter().any(|glob| glob.is_match(path_str)))
+    }
 }
 
 /// Simple search engine with fixed-size indices and zero post-init allocation
@@ -213,7 +263,7 @@ impl SearchEngine {
     }
 
     /// Check if a term matches content at word boundaries
-    fn term_matches(term: &[u8], content: &[u8]) -> bool {
+    pub fn term_matches(term: &[u8], content: &[u8]) -> bool {
         if term.is_empty() || content.is_empty() || term.len() > content.len() {
             return false;
         }
@@ -262,9 +312,9 @@ impl SearchEngine {
     }
 
     /// Calculate normalized relevance score for a document
-    fn calculate_score(query: &str, doc: &Document) -> f32 {
+    pub fn calculate_score(query: &str, doc: &Document) -> f32 {
         let mut score = 0.0_f32;
-        let mut query_terms = ArrayVec::<&[u8], MAX_QUERY_TERMS>::new();
+        let mut query_terms = ArrayVec::<&[u8], 10>::new();
         let mut matches_found = 0_u32;
 
         // Split query into terms
@@ -311,18 +361,37 @@ impl SearchEngine {
     /// Search for documents matching the query
     ///
     /// # Errors
-    /// Returns error if result buffer is full
+    /// Returns error if:
+    /// - Query is invalid
+    /// - Result buffer is full
     pub fn search(&self, query: &str) -> Result<ArrayVec<SearchResult, MAX_RESULTS>> {
+        // Validate query
+        validate_query(query)?;
+
         let mut results = ArrayVec::new();
         let mut scores = ArrayVec::<(f32, usize), MAX_DOCUMENTS>::new();
 
+        // Create glob matcher for filename matching
+        let glob_matcher = GlobMatcher::new(query)?;
+
         // Calculate scores and store document indices
         for (idx, doc) in self.documents.iter().enumerate() {
-            let score = Self::calculate_score(query, doc);
+            let mut score = Self::calculate_score(query, doc);
+
+            // Boost score for glob pattern matches
+            if glob_matcher.is_match(&doc.path) {
+                score = (score * 1.5).min(100.0);
+            }
+
             if score > 0.0 {
-                let _ = scores.try_push((score, idx));
+                scores
+                    .try_push((score, idx))
+                    .map_err(|_| Error::search("Too many matching documents"))?;
             }
         }
+
+        // Assert we haven't exceeded limits
+        assert!(scores.len() <= MAX_DOCUMENTS, "Score buffer overflow");
 
         // Sort by score in descending order
         scores
@@ -336,8 +405,31 @@ impl SearchEngine {
                 .map_err(|_| Error::search("Too many results"))?;
         }
 
+        // Assert result count is valid
+        assert!(results.len() <= MAX_RESULTS, "Result buffer overflow");
+
         Ok(results)
     }
+}
+
+/// Validate a search query against constraints
+pub fn validate_query(query: &str) -> Result<()> {
+    // Check for empty query
+    if query.is_empty() {
+        return Err(Error::search("Query must not be empty"));
+    }
+
+    // Assert query length is reasonable
+    if query.len() > MAX_TERM_LENGTH {
+        return Err(Error::search("Query too long"));
+    }
+
+    // Validate query characters
+    if query.contains('\0') || !query.chars().all(|c| c.is_ascii() || c.is_whitespace()) {
+        return Err(Error::search("Query contains invalid characters"));
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -585,5 +677,23 @@ mod tests {
         // Should fail to save
         engine.add_document(&doc_path, "content").unwrap();
         assert!(engine.save(&index_path).is_err());
+    }
+
+    #[test]
+    fn test_validate_query() {
+        // Valid queries
+        assert!(validate_query("test").is_ok());
+        assert!(validate_query("test.txt").is_ok());
+        assert!(validate_query("*.txt").is_ok());
+
+        // Empty query
+        assert!(validate_query("").is_err());
+
+        // Too long query
+        let long_query = "a".repeat(MAX_TERM_LENGTH + 1);
+        assert!(validate_query(&long_query).is_err());
+
+        // Invalid characters
+        assert!(validate_query("test\0file").is_err());
     }
 }

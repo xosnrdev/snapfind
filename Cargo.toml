@@ -11,12 +11,19 @@ authors = ["Success Kingsley <hello@xosnrdev.tech>"]
 # keywords = ["search", "files", "semantic", "finder"]
 # categories = ["command-line-utilities", "filesystem"]
 
+[features]
+default = ["std", "cli"]
+std = []
+cli = ["std", "dep:clap", "dep:clap-cargo"]
+
 [dependencies]
 arrayvec = { version = "0.7.6", default-features = false }
-clap = { version = "4.5.31", features = ["derive", "wrap_help"] }
-clap-cargo = { version = "0.15.2", features = [
-    "clap",
-], default-features = false }
+clap = { version = "4.5.31", features = [
+    "derive",
+    "wrap_help",
+], optional = true }
+clap-cargo = { version = "0.15.2", features = ["clap"], optional = true }
+globset = { version = "0.4.16", default-features = false }
 static-str = { version = "0.2.0", default-features = false }
 thiserror = { version = "1.0.69", default-features = false }
 
@@ -45,3 +52,4 @@ codegen-units-std = 1
 [[bin]]
 name = "snap"
 path = "src/main.rs"
+required-features = ["cli"]

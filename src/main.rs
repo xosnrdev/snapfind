@@ -1,3 +1,4 @@
+#![cfg_attr(not(feature = "std"), no_std)]
 #![deny(
     warnings,
     missing_debug_implementations,
@@ -8,6 +9,11 @@
 )]
 //! `SnapFind` - Fast file search tool that understands content.
 
+#[cfg(not(feature = "std"))]
+extern crate core as std;
+#[cfg(feature = "std")]
+extern crate std;
+
 mod alloc;
 mod crawler;
 mod error;
@@ -16,10 +22,14 @@ mod text;
 mod types;
 
 use alloc::TrackingAllocator;
+#[cfg(feature = "std")]
 use std::fs;
+#[cfg(feature = "std")]
 use std::path::{Path, PathBuf};
 
+#[cfg(feature = "cli")]
 use clap::{Parser, Subcommand};
+#[cfg(feature = "cli")]
 use clap_cargo::style::CLAP_STYLING;
 use error::{Error, Result};
 use text::TextDetector;
@@ -28,20 +38,23 @@ use text::TextDetector;
 static ALLOCATOR: TrackingAllocator = TrackingAllocator::new();
 
 /// CLI arguments for `SnapFind`
-#[derive(Parser, Debug)]
-#[command(author, version, about, display_name="", styles = CLAP_STYLING)]
+#[cfg_attr(feature = "cli", derive(Parser))]
+#[derive(Debug)]
+#[cfg_attr(feature = "cli", command(author, version, about))]
+#[cfg_attr(feature = "cli", command(display_name="", styles = CLAP_STYLING))]
 struct Cli {
-    #[command(subcommand)]
+    #[cfg_attr(feature = "cli", command(subcommand))]
     command: Command,
 }
 
 /// Available commands
-#[derive(Subcommand, Debug)]
+#[cfg_attr(feature = "cli", derive(Subcommand))]
+#[derive(Debug)]
 enum Command {
     /// Index a directory for searching
     Index {
         /// Directory to index
-        #[arg(default_value = ".")]
+        #[cfg_attr(feature = "cli", arg(default_value = "."))]
         dir: PathBuf,
     },
     /// Search for files
@@ -49,7 +62,7 @@ enum Command {
         /// Search query
         query: String,
         /// Directory to search in (must be indexed first)
-        #[arg(default_value = ".")]
+        #[cfg_attr(feature = "cli", arg(default_value = "."))]
         dir:   PathBuf,
     },
 }
@@ -160,6 +173,9 @@ fn index_directory(dir: &Path) -> Result<()> {
 fn search_files(query: &str, dir: &Path) -> Result<()> {
     println!("Searching for: {query} in {}", dir.display());
 
+    // Validate query
+    search::validate_query(query)?;
+
     // Validate directory
     if !dir.exists() {
         return Err(Error::search(&format!("Directory not found: {}", dir.display())));
@@ -168,45 +184,42 @@ fn search_files(query: &str, dir: &Path) -> Result<()> {
         return Err(Error::search(&format!("Not a directory: {}", dir.display())));
     }
 
-    // Load the index
-    let index_path = get_index_path(dir);
-    if !index_path.exists() {
-        return Err(Error::search(&format!(
-            "No index found for {}. Run 'snap index' first.",
-            dir.display()
-        )));
-    }
+    // Load or create search engine
+    let engine = if let Ok(loaded) = search::SearchEngine::load(&get_index_path(dir)) {
+        loaded
+    } else {
+        // If no index exists, create a new one and scan directory
+        let mut new_engine = search::SearchEngine::new();
+        let mut crawler = crawler::Crawler::new(dir)?;
 
-    let engine = search::SearchEngine::load(&index_path)?;
+        while let Some(files) = crawler.process_next()? {
+            for file in files {
+                if let Ok(content) = fs::read_to_string(&file) {
+                    new_engine.add_document(&file, &content)?;
+                }
+            }
+        }
+        new_engine
+    };
+
+    // Search using the engine
     let results = engine.search(query)?;
 
     if results.is_empty() {
         println!("\nNo matches found for query: {query}");
         println!("Tips:");
-        println!("  - Try using fewer or simpler search terms");
-        println!("  - Check if the directory has been indexed recently");
-        println!(
-            "  - Make sure the directory contains text files (we support plain text, markdown, \
-             source code, and config files)"
-        );
+        println!("  - Try using simpler search terms");
+        println!("  - Check if the files exist in the directory");
+        println!("  - Make sure you have read permissions for the files");
         return Ok(());
     }
 
     println!("\nFound {} matches:", results.len());
-    println!("Score | Type | Path");
-    println!("------|------|------");
+    println!("Score | Path");
+    println!("------|------");
 
     for result in results {
-        // Determine match type based on score
-        let match_type = if result.score > 60.0 {
-            "name+content"
-        } else if result.score > 40.0 {
-            "name"
-        } else {
-            "content"
-        };
-
-        println!("{:>5.1}% | {:<4} | {}", result.score, match_type, result.path.display());
+        println!("{:>5.1}% | {}", result.score, result.path.display());
     }
 
     Ok(())
