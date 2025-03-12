@@ -9,7 +9,7 @@ use std::{
 use clap::{Parser, Subcommand};
 #[cfg(feature = "cli")]
 use clap_cargo::style::CLAP_STYLING;
-use snapfind::alloc::TrackingAllocator;
+use snapfind::allocator::TrackingAllocator;
 use snapfind::error::{Error, Result};
 use snapfind::text::TextDetector;
 use snapfind::{crawler, search};

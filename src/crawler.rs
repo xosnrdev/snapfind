@@ -122,7 +122,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::alloc::TrackingAllocator;
+    use crate::allocator::TrackingAllocator;
 
     #[test]
     fn test_new_crawler() {

@@ -16,7 +16,7 @@ extern crate core as std;
 #[cfg(feature = "std")]
 extern crate std;
 
-pub mod alloc;
+pub mod allocator;
 pub mod crawler;
 pub mod error;
 pub mod search;
