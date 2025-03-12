@@ -48,6 +48,7 @@ impl Error {
     /// # Design
     /// - Message buffer is fixed-size (`MAX_ERROR_LENGTH`)
     /// - No heap allocation
+    #[must_use]
     pub fn search(msg: &str) -> Self {
         let mut buf = ArrayString::new();
         // Try to write the message, truncate if too long

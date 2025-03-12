@@ -1,43 +1,22 @@
-#![cfg_attr(not(feature = "std"), no_std)]
-#![deny(
-    warnings,
-    missing_debug_implementations,
-    missing_docs,
-    clippy::all,
-    clippy::pedantic,
-    clippy::nursery
-)]
-//! `SnapFind` - Fast file search tool that understands content.
-
-#[cfg(not(feature = "std"))]
-extern crate core as std;
 #[cfg(feature = "std")]
-extern crate std;
-
-mod alloc;
-mod crawler;
-mod error;
-mod search;
-mod text;
-mod types;
-
-use alloc::TrackingAllocator;
-#[cfg(feature = "std")]
-use std::fs;
-#[cfg(feature = "std")]
-use std::path::{Path, PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process,
+};
 
 #[cfg(feature = "cli")]
 use clap::{Parser, Subcommand};
 #[cfg(feature = "cli")]
 use clap_cargo::style::CLAP_STYLING;
-use error::{Error, Result};
-use text::TextDetector;
+use snapfind::alloc::TrackingAllocator;
+use snapfind::error::{Error, Result};
+use snapfind::text::TextDetector;
+use snapfind::{crawler, search};
 
 #[global_allocator]
 static ALLOCATOR: TrackingAllocator = TrackingAllocator::new();
 
-/// CLI arguments for `SnapFind`
 #[cfg_attr(feature = "cli", derive(Parser))]
 #[derive(Debug)]
 #[cfg_attr(feature = "cli", command(author, version, about))]
@@ -47,7 +26,6 @@ struct Cli {
     command: Command,
 }
 
-/// Available commands
 #[cfg_attr(feature = "cli", derive(Subcommand))]
 #[derive(Debug)]
 enum Command {
@@ -67,12 +45,10 @@ enum Command {
     },
 }
 
-/// Get the index file path for a directory
 fn get_index_path(dir: &Path) -> PathBuf {
     dir.join(".snapfind_index")
 }
 
-/// Index a directory for searching
 fn index_directory(dir: &Path) -> Result<()> {
     println!("Indexing directory: {}", dir.display());
 
@@ -83,27 +59,22 @@ fn index_directory(dir: &Path) -> Result<()> {
     let mut last_progress = 0;
     let mut had_errors = false;
 
-    // Track progress invariants
     let mut last_processed = 0;
     let mut last_dirs = 0;
 
     while let Some(files) = crawler.process_next()? {
         let (processed, max_files, dirs) = crawler.progress();
 
-        // Assert progress invariants
         assert!(processed >= last_processed, "File count must not decrease");
         assert!(dirs >= last_dirs, "Directory count must not decrease");
         last_processed = processed;
         last_dirs = dirs;
 
         for file in files {
-            // Read initial sample for text detection
             match fs::read(&file) {
                 Ok(content) => {
-                    // Validate text content
                     let validation = detector.validate(&content);
                     if validation.is_valid_text() {
-                        // Log file type information
                         if processed >= last_progress + 100 {
                             println!(
                                 "Progress: {processed}/{max_files} files indexed ({dirs} \
@@ -125,7 +96,6 @@ fn index_directory(dir: &Path) -> Result<()> {
                                 total_files += 1;
                             },
                             Err(e) => {
-                                // Stop on first document error
                                 eprintln!("\nIndexing stopped due to error.");
                                 return Err(e);
                             },
@@ -135,13 +105,11 @@ fn index_directory(dir: &Path) -> Result<()> {
                 Err(e) => {
                     had_errors = true;
                     eprintln!("Error: Failed to read {}: {e}", file.display());
-                    // Continue with next file
                 },
             }
         }
     }
 
-    // Final status
     if total_files == 0 {
         if had_errors {
             return Err(Error::search(
@@ -157,26 +125,21 @@ fn index_directory(dir: &Path) -> Result<()> {
     let (_, _, dirs) = crawler.progress();
     println!("- Directories processed: {dirs}");
 
-    // Save the index
     let index_path = get_index_path(dir);
     engine.save(&index_path)?;
     println!("- Index saved to {}", index_path.display());
 
-    // End initialization phase
     ALLOCATOR.end_init();
     println!("- Peak memory usage: {} bytes", ALLOCATOR.peak());
 
     Ok(())
 }
 
-/// Search for files matching a query
 fn search_files(query: &str, dir: &Path) -> Result<()> {
     println!("Searching for: {query} in {}", dir.display());
 
-    // Validate query
     search::validate_query(query)?;
 
-    // Validate directory
     if !dir.exists() {
         return Err(Error::search(&format!("Directory not found: {}", dir.display())));
     }
@@ -184,11 +147,9 @@ fn search_files(query: &str, dir: &Path) -> Result<()> {
         return Err(Error::search(&format!("Not a directory: {}", dir.display())));
     }
 
-    // Load or create search engine
     let engine = if let Ok(loaded) = search::SearchEngine::load(&get_index_path(dir)) {
         loaded
     } else {
-        // If no index exists, create a new one and scan directory
         let mut new_engine = search::SearchEngine::new();
         let mut crawler = crawler::Crawler::new(dir)?;
 
@@ -202,7 +163,6 @@ fn search_files(query: &str, dir: &Path) -> Result<()> {
         new_engine
     };
 
-    // Search using the engine
     let results = engine.search(query)?;
 
     if results.is_empty() {
@@ -253,6 +213,6 @@ fn main() {
 
     if let Err(e) = result {
         eprintln!("{}", e.user_message());
-        std::process::exit(1);
+        process::exit(1);
     }
 }

@@ -1,4 +1,4 @@
-//! Text file detection and validation
+//! Text file detection and validation implementation
 
 /// Maximum sample size for text validation
 pub const TEXT_SAMPLE_SIZE: usize = 512;
@@ -65,27 +65,32 @@ pub struct TextDetector {
 
 impl TextValidation {
     /// Creates a binary validation result
+    #[must_use]
     pub const fn binary() -> Self {
         Self { confidence: 0, encoding: TextEncoding::Unknown, mime_type: TextMimeType::Unknown }
     }
 
     /// Returns true if the content is valid text
+    #[must_use]
     pub const fn is_valid_text(&self) -> bool {
         self.confidence >= 50
     }
 
     /// Returns the confidence score (0-100)
+    #[must_use]
     pub const fn confidence(&self) -> u8 {
         self.confidence
     }
 
     /// Returns the detected encoding
     #[cfg(test)]
+    #[must_use]
     pub const fn encoding(&self) -> TextEncoding {
         self.encoding
     }
 
     /// Returns the detected MIME type
+    #[must_use]
     pub const fn mime_type(&self) -> TextMimeType {
         self.mime_type
     }
@@ -110,25 +115,21 @@ impl TextStats {
 
     /// Updates statistics for a single byte
     fn update(&mut self, byte: u8) {
-        // Track null bytes
         if byte == 0 {
             assert!(self.null_bytes < u16::try_from(TEXT_SAMPLE_SIZE).unwrap());
             self.null_bytes += 1;
         }
 
-        // Track control characters
         if byte < 32 && !matches!(byte, b'\n' | b'\r' | b'\t') {
             assert!(self.control_chars < u16::try_from(TEXT_SAMPLE_SIZE).unwrap());
             self.control_chars += 1;
         }
 
-        // Track line breaks
         if byte == b'\n' {
             assert!(self.line_breaks < u16::try_from(TEXT_SAMPLE_SIZE).unwrap());
             self.line_breaks += 1;
         }
 
-        // Update ASCII ratio
         if byte < 128 {
             self.ascii_ratio =
                 u8::try_from((u16::from(self.ascii_ratio) * 99 + 100) / 100).unwrap();
@@ -136,6 +137,12 @@ impl TextStats {
             self.ascii_ratio = u8::try_from((u16::from(self.ascii_ratio) * 99) / 100).unwrap();
         }
         assert!(self.ascii_ratio <= 100);
+    }
+}
+
+impl Default for TextDetector {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -149,28 +156,23 @@ impl TextDetector {
     /// Validates text content
     #[must_use]
     pub fn validate(&mut self, content: &[u8]) -> TextValidation {
-        // Basic validity check
         if !Self::check_basic_validity(content) {
             return TextValidation::binary();
         }
 
-        // Analyze content in detail
         if !self.analyze_content(content) {
             return TextValidation::binary();
         }
 
-        // Determine final result
         self.determine_result()
     }
 
     /// Checks basic validity of content
     const fn check_basic_validity(content: &[u8]) -> bool {
-        // Empty content is not valid
         if content.is_empty() {
             return false;
         }
 
-        // Content must not be too large
         if content.len() > TEXT_SAMPLE_SIZE * 1024 {
             return false;
         }
@@ -180,28 +182,22 @@ impl TextDetector {
 
     /// Analyzes content for text validity
     fn analyze_content(&mut self, content: &[u8]) -> bool {
-        // Reset stats
         self.stats.reset();
 
-        // Sample content
         let sample_size = content.len().min(TEXT_SAMPLE_SIZE);
         self.sample_buf[..sample_size].copy_from_slice(&content[..sample_size]);
 
-        // Analyze each byte
         for &byte in &content[..sample_size] {
             self.stats.update(byte);
         }
 
-        // Early return if too many null bytes
         if self.stats.null_bytes > u16::try_from(sample_size).unwrap_or(u16::MAX) / 10 {
             return false;
         }
 
-        // Update ASCII ratio based on final counts
         let ascii_count = content[..sample_size].iter().filter(|&&b| b < 128).count();
         self.stats.ascii_ratio = u8::try_from((ascii_count * 100) / sample_size).unwrap();
 
-        // Check for UTF-8 validity
         if let Err(e) = std::str::from_utf8(&content[..sample_size]) {
             self.stats.utf8_errors = u16::try_from(e.valid_up_to()).unwrap();
         }
@@ -211,37 +207,30 @@ impl TextDetector {
 
     /// Determines final validation result
     fn determine_result(&self) -> TextValidation {
-        // Binary detection
         if self.is_binary_header() || self.stats.null_bytes > 0 {
             return TextValidation::binary();
         }
 
-        // Calculate confidence score (0-100)
         let mut confidence = 100_u8;
 
-        // Penalize for control characters
         if self.stats.control_chars > 0 {
             confidence =
                 confidence.saturating_sub(u8::try_from(self.stats.control_chars).unwrap_or(100));
         }
 
-        // Penalize for UTF-8 errors
         if self.stats.utf8_errors > 0 {
             confidence =
                 confidence.saturating_sub(u8::try_from(self.stats.utf8_errors * 10).unwrap_or(100));
         }
 
-        // Require some line breaks for higher confidence
         if self.stats.line_breaks < 2 {
             confidence = confidence.saturating_sub(20);
         }
 
-        // Require high ASCII ratio
         if self.stats.ascii_ratio < 90 {
             confidence = confidence.saturating_sub(90_u8.saturating_sub(self.stats.ascii_ratio));
         }
 
-        // Determine MIME type
         let mime_type = if self.stats.line_breaks == 0 {
             TextMimeType::Plain
         } else if self.sample_buf.starts_with(b"#!") || self.sample_buf.starts_with(b"<?") {
@@ -249,25 +238,21 @@ impl TextDetector {
         } else if self.sample_buf.starts_with(b"[")
             || (self.sample_buf.starts_with(b"# ") && self.sample_buf.contains(&b'['))
         {
-            // Config files often start with sections or comments
             TextMimeType::Config
-        } else if self.sample_buf.starts_with(b"# ") || self.sample_buf.starts_with(b"## ") {
-            // Markdown headers
-            TextMimeType::Markdown
-        } else if self.sample_buf.contains(&b'#')
-            && (self.sample_buf.contains(&b'*')
-                || self.sample_buf.contains(&b'-')
-                || self.sample_buf.contains(&b'[')
-                || self.sample_buf.contains(&b'`'))
+        } else if self.sample_buf.starts_with(b"# ")
+            || self.sample_buf.starts_with(b"## ")
+            || (self.sample_buf.contains(&b'#')
+                && (self.sample_buf.contains(&b'*')
+                    || self.sample_buf.contains(&b'-')
+                    || self.sample_buf.contains(&b'[')
+                    || self.sample_buf.contains(&b'`')))
         {
-            // Markdown with common markers
             TextMimeType::Markdown
         } else if self.sample_buf.contains(&b'{')
             || self.sample_buf.contains(&b'}')
             || self.sample_buf.contains(&b'=')
             || self.sample_buf.contains(&b';')
         {
-            // Source code with common syntax elements
             TextMimeType::Source
         } else {
             TextMimeType::Plain
