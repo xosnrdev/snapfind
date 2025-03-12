@@ -1,13 +1,7 @@
-#[cfg(feature = "std")]
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    process,
-};
+use std::path::{Path, PathBuf};
+use std::{fs, process};
 
-#[cfg(feature = "cli")]
 use clap::{Parser, Subcommand};
-#[cfg(feature = "cli")]
 use clap_cargo::style::CLAP_STYLING;
 use snapfind::allocator::TrackingAllocator;
 use snapfind::error::{Error, Result};
@@ -17,22 +11,19 @@ use snapfind::{crawler, search};
 #[global_allocator]
 static ALLOCATOR: TrackingAllocator = TrackingAllocator::new();
 
-#[cfg_attr(feature = "cli", derive(Parser))]
-#[derive(Debug)]
-#[cfg_attr(feature = "cli", command(author, version, about))]
-#[cfg_attr(feature = "cli", command(display_name="", styles = CLAP_STYLING))]
+#[derive(Debug, Parser)]
+#[command(author, version, about, display_name="", styles = CLAP_STYLING)]
 struct Cli {
-    #[cfg_attr(feature = "cli", command(subcommand))]
+    #[command(subcommand)]
     command: Command,
 }
 
-#[cfg_attr(feature = "cli", derive(Subcommand))]
-#[derive(Debug)]
+#[derive(Debug, Subcommand)]
 enum Command {
     /// Index a directory for searching
     Index {
         /// Directory to index
-        #[cfg_attr(feature = "cli", arg(default_value = "."))]
+        #[arg(default_value = ".")]
         dir: PathBuf,
     },
     /// Search for files
@@ -40,7 +31,7 @@ enum Command {
         /// Search query
         query: String,
         /// Directory to search in (must be indexed first)
-        #[cfg_attr(feature = "cli", arg(default_value = "."))]
+        #[arg(default_value = ".")]
         dir:   PathBuf,
     },
 }
