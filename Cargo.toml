@@ -19,7 +19,7 @@ clap-cargo = { version = "0.15.2", features = [
 ], default-features = false }
 globset = { version = "0.4.16", default-features = false }
 static-str = { version = "0.2.0", default-features = false }
-thiserror = { version = "1.0.69", default-features = false }
+thiserror = { version = "2.0.12", default-features = false }
 
 [profile.release]
 lto = "fat"
