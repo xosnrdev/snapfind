@@ -23,7 +23,6 @@ pub struct SearchResult {
     pub score: f32,
 }
 
-/// Assertion to verify constants at compile time
 const _: () = {
     assert!(MAX_DEPTH > 0);
     assert!(MAX_FILES > 0);

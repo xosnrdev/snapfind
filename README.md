@@ -20,13 +20,13 @@ cargo install snapfind
 Index a directory:
 
 ```bash
-snapfind index /path/to/dir
+snap index /path/to/dir
 ```
 
 Search for files:
 
 ```bash
-snapfind search "your query" /path/to/dir
+snap search "your query" /path/to/dir
 ```
 
 ## Limits
@@ -41,10 +41,10 @@ Search by content:
 
 ```bash
 # Find code
-snapfind search "fn main" ~/code
+snap search "fn main" ~/code
 
 # Find documentation
-snapfind search "# Introduction" ~/docs
+snap search "# Introduction" ~/docs
 ```
 
 ## Common Messages
@@ -52,7 +52,7 @@ snapfind search "# Introduction" ~/docs
 Errors:
 
 - "Directory not found": Check if the path exists
-- "No index found": Run `snapfind index` first
+- "No index found": Run `snap index` first
 - "File too large": Files over 10MB are skipped
 
 Tips:
