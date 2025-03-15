@@ -38,7 +38,7 @@ debug-assertions = true
 overflow-checks = true
 
 [dev-dependencies]
-tempfile = "3.18.0"
+tempfile = "3.19.0"
 
 [package.metadata]
 codegen-units-std = 1
