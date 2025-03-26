@@ -1,81 +1,78 @@
-use arrayvec::ArrayString;
-use thiserror::Error;
-
-pub const MAX_ERROR_LENGTH: usize = 256;
-
-pub type Result<T> = std::result::Result<T, Error>;
-
-#[derive(Debug, Error)]
-pub enum Error {
-    #[error("Error: {0}")]
-    Io(#[from] std::io::Error),
-
-    #[error("Error: Maximum directory depth of 1000 exceeded")]
-    DepthExceeded,
-
-    #[error("Error: Maximum file count of 1,000,000 exceeded")]
-    FileCountExceeded,
-
-    #[error("Error: Maximum file size of 10MB exceeded")]
-    FileSizeExceeded,
-
-    #[error("Error: Path length exceeded 255 characters")]
-    PathTooLong,
-
-    #[error("Error: {0}")]
-    Search(Box<ArrayString<MAX_ERROR_LENGTH>>),
+#[derive(Debug)]
+pub struct SnapError {
+    error: Option<anyhow::Error>,
+    code: i32,
 }
 
-impl Error {
-    #[must_use]
-    pub fn search(msg: &str) -> Self {
-        let mut buf = ArrayString::new();
-        let _ = buf.try_push_str(msg);
-        Self::Search(Box::new(buf))
+impl SnapError {
+    pub fn silent(code: i32) -> Self {
+        Self { error: None, code }
     }
 
-    #[must_use]
-    pub fn user_message(&self) -> ArrayString<MAX_ERROR_LENGTH> {
-        let mut msg = ArrayString::new();
-        match self {
-            Self::Io(e) => {
-                let _ = msg.try_push_str(&format!(
-                    "Error: {e}\nTip: Check file permissions and try again"
-                ));
-            }
-            Self::DepthExceeded => {
-                let _ = msg.try_push_str(
-                    "Error: Directory structure too deep (max 1000 levels)\nTip: Try indexing a \
-                     shallower directory",
-                );
-            }
-            Self::FileCountExceeded => {
-                let _ = msg.try_push_str(
-                    "Error: Too many files (max 1,000,000)\nTip: Try indexing a smaller directory",
-                );
-            }
-            Self::FileSizeExceeded => {
-                let _ = msg.try_push_str(
-                    "Error: File too large (max 10MB)\nTip: Large files are skipped during \
-                     indexing",
-                );
-            }
-            Self::PathTooLong => {
-                let _ = msg.try_push_str(
-                    "Error: Path too long (max 255 characters)\nTip: Try moving files to a \
-                     shorter path",
-                );
-            }
-            Self::Search(search_msg) => {
-                if search_msg.contains("No index found") {
-                    let _ = msg.try_push_str(search_msg);
-                } else {
-                    let _ = msg.try_push_str("Error: ");
-                    let _ = msg.try_push_str(search_msg);
-                    let _ = msg.try_push_str("\nTip: Try simplifying your search");
-                }
+    pub fn message<T: Into<anyhow::Error>>(e: T) -> Self {
+        Self {
+            error: Some(e.into()),
+            code: 101,
+        }
+    }
+
+    pub fn with_code(msg: impl ToString, code: i32) -> Self {
+        Self {
+            error: Some(anyhow::anyhow!("{}", msg.to_string())),
+            code,
+        }
+    }
+
+    pub fn code(&self) -> i32 {
+        self.code
+    }
+}
+
+macro_rules! process_error_from {
+    ($from:ty) => {
+        impl From<$from> for SnapError {
+            fn from(error: $from) -> Self {
+                Self::message(error)
             }
         }
-        msg
+    };
+}
+
+process_error_from!(anyhow::Error);
+process_error_from!(std::io::Error);
+
+impl From<String> for SnapError {
+    fn from(msg: String) -> Self {
+        Self::message(anyhow::anyhow!("{}", msg))
     }
 }
+
+impl From<&str> for SnapError {
+    fn from(msg: &str) -> Self {
+        Self::message(anyhow::anyhow!("{}", msg))
+    }
+}
+
+impl From<i32> for SnapError {
+    fn from(code: i32) -> Self {
+        Self::silent(code)
+    }
+}
+
+impl std::fmt::Display for SnapError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        if let Some(ref error) = self.error {
+            write!(f, "{}", error)
+        } else {
+            write!(f, "Error code: {}", self.code)
+        }
+    }
+}
+
+impl std::error::Error for SnapError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.error.as_ref().map(|e| e.as_ref())
+    }
+}
+
+pub type SnapResult<T> = anyhow::Result<T>;

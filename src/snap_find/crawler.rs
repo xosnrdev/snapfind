@@ -3,12 +3,17 @@ use std::path::{Path, PathBuf};
 
 use arrayvec::ArrayVec;
 
-use super::error::{Error, Result};
+use super::error::{SnapError, SnapResult};
 
 pub const MAX_DEPTH: usize = 1_000;
 pub const MAX_FILES: usize = 1_000;
 pub const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
 pub const MAX_PATH_LENGTH: usize = 255;
+
+pub const ERROR_DEPTH_EXCEEDED: i32 = 201;
+pub const ERROR_FILE_COUNT_EXCEEDED: i32 = 202;
+pub const ERROR_FILE_SIZE_EXCEEDED: i32 = 203;
+pub const ERROR_PATH_TOO_LONG: i32 = 204;
 
 #[derive(Debug)]
 pub struct Crawler {
@@ -18,13 +23,16 @@ pub struct Crawler {
 }
 
 impl Crawler {
-    pub fn new(start_path: &Path) -> Result<Self> {
+    pub fn new(start_path: &Path) -> SnapResult<Self> {
         Self::validate_path(start_path)?;
 
         let mut queue = ArrayVec::new();
-        queue
-            .try_push((start_path.to_path_buf(), 0))
-            .map_err(|_| Error::DepthExceeded)?;
+        queue.try_push((start_path.to_path_buf(), 0)).map_err(|_| {
+            anyhow::Error::from(SnapError::with_code(
+                format!("Maximum directory depth of {MAX_DEPTH} exceeded"),
+                ERROR_DEPTH_EXCEEDED,
+            ))
+        })?;
 
         Ok(Self {
             queue,
@@ -38,7 +46,7 @@ impl Crawler {
         (self.file_count, MAX_FILES, self.dir_count)
     }
 
-    pub fn process_next(&mut self) -> Result<Option<ArrayVec<PathBuf, MAX_FILES>>> {
+    pub fn process_next(&mut self) -> SnapResult<Option<ArrayVec<PathBuf, MAX_FILES>>> {
         let Some((dir, current_depth)) = self.queue.pop() else {
             return Ok(None);
         };
@@ -57,21 +65,38 @@ impl Crawler {
             if entry.file_type()?.is_dir() {
                 let new_depth = current_depth + 1;
                 if new_depth >= MAX_DEPTH {
-                    return Err(Error::DepthExceeded);
+                    return Err(anyhow::Error::from(SnapError::with_code(
+                        format!("Maximum directory depth of {MAX_DEPTH} exceeded"),
+                        ERROR_DEPTH_EXCEEDED,
+                    )));
                 }
-                self.queue
-                    .try_push((path, new_depth))
-                    .map_err(|_| Error::DepthExceeded)?;
+                self.queue.try_push((path, new_depth)).map_err(|_| {
+                    anyhow::Error::from(SnapError::with_code(
+                        format!("Maximum directory depth of {MAX_DEPTH} exceeded"),
+                        ERROR_DEPTH_EXCEEDED,
+                    ))
+                })?;
                 self.dir_count += 1;
             } else {
                 if self.file_count >= MAX_FILES {
-                    return Err(Error::FileCountExceeded);
+                    return Err(anyhow::Error::from(SnapError::with_code(
+                        format!("Maximum file count of {MAX_FILES} exceeded"),
+                        ERROR_FILE_COUNT_EXCEEDED,
+                    )));
                 }
                 let size = entry.metadata()?.len();
                 if size > MAX_FILE_SIZE {
-                    return Err(Error::FileSizeExceeded);
+                    return Err(anyhow::Error::from(SnapError::with_code(
+                        "Maximum file size of 10MB exceeded".to_string(),
+                        ERROR_FILE_SIZE_EXCEEDED,
+                    )));
                 }
-                files.try_push(path).map_err(|_| Error::FileCountExceeded)?;
+                files.try_push(path).map_err(|_| {
+                    anyhow::Error::from(SnapError::with_code(
+                        format!("Maximum file count of {MAX_FILES} exceeded"),
+                        ERROR_FILE_COUNT_EXCEEDED,
+                    ))
+                })?;
                 self.file_count += 1;
             }
         }
@@ -84,10 +109,13 @@ impl Crawler {
         Ok(Some(files))
     }
 
-    fn validate_path(path: &Path) -> Result<()> {
+    fn validate_path(path: &Path) -> SnapResult<()> {
         let path_len = path.as_os_str().len();
         if path_len > MAX_PATH_LENGTH {
-            return Err(Error::PathTooLong);
+            return Err(anyhow::Error::from(SnapError::with_code(
+                format!("Path length exceeded {MAX_PATH_LENGTH} characters"),
+                ERROR_PATH_TOO_LONG,
+            )));
         }
         Ok(())
     }
@@ -148,10 +176,10 @@ mod tests {
         let data = vec![0u8; (MAX_FILE_SIZE + 1) as usize];
         f.write_all(&data).unwrap();
 
-        match crawler.process_next() {
-            Err(Error::FileSizeExceeded) => (),
-            other => panic!("Expected FileSizeExceeded error, got {other:?}"),
-        }
+        let result = crawler.process_next();
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("file size"), "Error should mention file size");
     }
 
     #[test]
@@ -212,10 +240,13 @@ mod tests {
         let long_name = "a".repeat(MAX_PATH_LENGTH + 1);
         let path = temp_dir.path().join(long_name);
 
-        assert!(matches!(
-            Crawler::validate_path(&path),
-            Err(Error::PathTooLong)
-        ));
+        let result = Crawler::validate_path(&path);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("Path length"),
+            "Error should mention path length"
+        );
     }
 
     #[test]
@@ -243,10 +274,13 @@ mod tests {
         let mut crawler = Crawler::new(temp_dir.path()).unwrap();
         crawler.file_count = MAX_FILES;
 
-        match crawler.process_next() {
-            Err(Error::FileCountExceeded) => (),
-            other => panic!("Expected FileCountExceeded error, got {other:?}"),
-        }
+        let result = crawler.process_next();
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("file count"),
+            "Error should mention file count"
+        );
     }
 
     #[test]
