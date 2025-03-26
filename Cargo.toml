@@ -11,6 +11,10 @@ readme = "README.md"
 keywords = ["search", "files", "semantic", "finder"]
 categories = ["command-line-utilities", "filesystem"]
 
+[[bin]]
+name = "snap"
+path = "src/main.rs"
+
 [dependencies]
 arrayvec = { version = "0.7.6", default-features = false }
 clap = { version = "4.5.33", features = ["derive"] }
@@ -18,7 +22,6 @@ clap-cargo = { version = "0.15.2", features = [
     "clap",
 ], default-features = false }
 globset = { version = "0.4.16", default-features = false }
-static-str = { version = "0.2.0", default-features = false }
 thiserror = { version = "2.0.12", default-features = false }
 
 [profile.release]
@@ -42,7 +45,3 @@ tempfile = "3.19.1"
 
 [package.metadata]
 codegen-units-std = 1
-
-[[bin]]
-name = "snap"
-path = "src/main.rs"

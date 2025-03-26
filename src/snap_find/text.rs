@@ -1,95 +1,69 @@
-//! Text file detection and validation implementation
-
-/// Maximum sample size for text validation
 pub const TEXT_SAMPLE_SIZE: usize = 512;
 
-/// Text encoding types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextEncoding {
-    /// UTF-8 encoded text
     Utf8,
-    /// Unknown or invalid encoding
     Unknown,
 }
 
-/// MIME type categories
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextMimeType {
-    /// text/plain
     Plain,
-    /// text/markdown
     Markdown,
-    /// text/x-*
     Source,
-    /// text/x-config
     Config,
-    /// application/octet-stream
     Unknown,
 }
 
-/// Text validation result
 #[derive(Debug)]
 pub struct TextValidation {
-    /// Confidence score (0-100)
     confidence: u8,
-    /// Detected encoding
     #[allow(dead_code)]
-    encoding:   TextEncoding,
-    /// Detected MIME type
-    mime_type:  TextMimeType,
+    encoding: TextEncoding,
+    mime_type: TextMimeType,
 }
 
-/// Statistical metrics for text validation
 #[derive(Debug)]
 pub struct TextStats {
-    /// Number of null bytes found
-    null_bytes:    u16,
-    /// Number of control characters found
+    null_bytes: u16,
     control_chars: u16,
-    /// Number of UTF-8 encoding errors
-    utf8_errors:   u16,
-    /// Number of line breaks found
-    line_breaks:   u16,
-    /// Percentage of ASCII bytes (0-100)
-    ascii_ratio:   u8,
+    utf8_errors: u16,
+    line_breaks: u16,
+    ascii_ratio: u8,
 }
 
-/// Text detector with pre-allocated buffers
 #[derive(Debug)]
 pub struct TextDetector {
-    /// Statistical metrics
-    stats:      TextStats,
-    /// Sample buffer
+    stats: TextStats,
     sample_buf: [u8; TEXT_SAMPLE_SIZE],
 }
 
 impl TextValidation {
-    /// Creates a binary validation result
     #[must_use]
     pub const fn binary() -> Self {
-        Self { confidence: 0, encoding: TextEncoding::Unknown, mime_type: TextMimeType::Unknown }
+        Self {
+            confidence: 0,
+            encoding: TextEncoding::Unknown,
+            mime_type: TextMimeType::Unknown,
+        }
     }
 
-    /// Returns true if the content is valid text
     #[must_use]
     pub const fn is_valid_text(&self) -> bool {
         self.confidence >= 50
     }
 
-    /// Returns the confidence score (0-100)
     #[must_use]
     pub const fn confidence(&self) -> u8 {
         self.confidence
     }
 
-    /// Returns the detected encoding
     #[cfg(test)]
     #[must_use]
     pub const fn encoding(&self) -> TextEncoding {
         self.encoding
     }
 
-    /// Returns the detected MIME type
     #[must_use]
     pub const fn mime_type(&self) -> TextMimeType {
         self.mime_type
@@ -97,23 +71,20 @@ impl TextValidation {
 }
 
 impl TextStats {
-    /// Creates a new stats tracker
     const fn new() -> Self {
         Self {
-            null_bytes:    0,
+            null_bytes: 0,
             control_chars: 0,
-            utf8_errors:   0,
-            line_breaks:   0,
-            ascii_ratio:   0,
+            utf8_errors: 0,
+            line_breaks: 0,
+            ascii_ratio: 0,
         }
     }
 
-    /// Resets all statistics
     const fn reset(&mut self) {
         *self = Self::new();
     }
 
-    /// Updates statistics for a single byte
     fn update(&mut self, byte: u8) {
         if byte == 0 {
             assert!(self.null_bytes < u16::try_from(TEXT_SAMPLE_SIZE).unwrap());
@@ -147,13 +118,14 @@ impl Default for TextDetector {
 }
 
 impl TextDetector {
-    /// Creates a new detector with pre-allocated buffers
     #[must_use]
     pub const fn new() -> Self {
-        Self { stats: TextStats::new(), sample_buf: [0; TEXT_SAMPLE_SIZE] }
+        Self {
+            stats: TextStats::new(),
+            sample_buf: [0; TEXT_SAMPLE_SIZE],
+        }
     }
 
-    /// Validates text content
     #[must_use]
     pub fn validate(&mut self, content: &[u8]) -> TextValidation {
         if !Self::check_basic_validity(content) {
@@ -167,7 +139,6 @@ impl TextDetector {
         self.determine_result()
     }
 
-    /// Checks basic validity of content
     const fn check_basic_validity(content: &[u8]) -> bool {
         if content.is_empty() {
             return false;
@@ -180,7 +151,6 @@ impl TextDetector {
         true
     }
 
-    /// Analyzes content for text validity
     fn analyze_content(&mut self, content: &[u8]) -> bool {
         self.stats.reset();
 
@@ -205,7 +175,6 @@ impl TextDetector {
         true
     }
 
-    /// Determines final validation result
     fn determine_result(&self) -> TextValidation {
         if self.is_binary_header() || self.stats.null_bytes > 0 {
             return TextValidation::binary();
@@ -258,10 +227,13 @@ impl TextDetector {
             TextMimeType::Plain
         };
 
-        TextValidation { confidence: confidence.min(100), encoding: TextEncoding::Utf8, mime_type }
+        TextValidation {
+            confidence: confidence.min(100),
+            encoding: TextEncoding::Utf8,
+            mime_type,
+        }
     }
 
-    /// Checks for common binary file headers
     fn is_binary_header(&self) -> bool {
         let sample = &self.sample_buf[..4];
         matches!(sample, b"PK\x03\x04" | b"\x7FELF" | b"\x89PNG")

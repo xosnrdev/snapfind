@@ -297,16 +297,9 @@ dependencies = [
  "clap",
  "clap-cargo",
  "globset",
- "static-str",
  "tempfile",
  "thiserror",
 ]
-
-[[package]]
-name = "static-str"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "052bb4042483bc3a48aec03723a77c41742f7acb349447cff6754e479ce96d0b"
 
 [[package]]
 name = "strsim"

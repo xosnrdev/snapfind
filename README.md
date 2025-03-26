@@ -63,4 +63,4 @@ Tips:
 
 ## License
 
-[MIT](./LICENSE)
+[MIT License](./LICENSE)

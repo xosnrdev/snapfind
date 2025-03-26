@@ -1,64 +1,45 @@
-//! Search engine implementation
-
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use arrayvec::ArrayVec;
 
-use crate::error::{Error, Result};
-use crate::types::SearchResult;
+use super::error::{Error, Result};
 
-/// Maximum number of search results to return
 pub const MAX_RESULTS: usize = 100;
-
-/// Maximum number of documents to store
 pub const MAX_DOCUMENTS: usize = 100;
-
-/// Maximum length of stored content in bytes
 pub const MAX_CONTENT_LENGTH: usize = 1_000;
-
-/// Maximum term length in bytes
 pub const MAX_TERM_LENGTH: usize = 50;
-
-/// Maximum path length in bytes
 pub const MAX_PATH_BYTES: usize = 1024;
-
-/// Index file magic number
 pub const MAGIC: [u8; 4] = *b"SNAP";
-
-/// Index file version
 pub const VERSION: u8 = 1;
-
-/// Maximum number of glob patterns to compile
 pub const MAX_PATTERNS: usize = 10;
 
-/// Document in the search index with fixed-size buffers
+#[derive(Debug, Clone)]
+pub struct SearchResult {
+    pub path: PathBuf,
+    pub score: f32,
+}
+
 #[derive(Debug)]
 pub struct Document {
-    /// Path to the document
-    pub path:    PathBuf,
-    /// Content of the document as raw bytes
+    pub path: PathBuf,
     pub content: ArrayVec<u8, MAX_CONTENT_LENGTH>,
 }
 
-/// Glob pattern matcher with fixed-size buffers
 #[derive(Debug)]
 struct GlobMatcher {
-    /// Compiled glob patterns
     patterns: ArrayVec<globset::GlobMatcher, MAX_PATTERNS>,
 }
 
 impl GlobMatcher {
-    /// Create a new glob matcher
-    ///
-    /// # Errors
-    /// Returns error if pattern is invalid
     fn new(pattern: &str) -> Result<Self> {
         assert!(!pattern.is_empty(), "Pattern must not be empty");
         assert!(pattern.len() <= MAX_TERM_LENGTH, "Pattern too long");
 
-        let mut matcher = Self { patterns: ArrayVec::new() };
+        let mut matcher = Self {
+            patterns: ArrayVec::new(),
+        };
 
         for part in pattern.split_whitespace() {
             let pattern_str = if !part.starts_with('*') && part.contains('*') {
@@ -79,12 +60,14 @@ impl GlobMatcher {
                 .map_err(|_| Error::search("Too many pattern parts"))?;
         }
 
-        assert!(!matcher.patterns.is_empty(), "Must have at least one pattern");
+        assert!(
+            !matcher.patterns.is_empty(),
+            "Must have at least one pattern"
+        );
 
         Ok(matcher)
     }
 
-    /// Check if a path matches any pattern
     fn is_match(&self, path: &Path) -> bool {
         assert!(path.as_os_str().len() <= MAX_PATH_BYTES, "Path too long");
 
@@ -93,11 +76,8 @@ impl GlobMatcher {
     }
 }
 
-/// Simple search engine with fixed-size indices and zero post-init allocation
 #[derive(Debug)]
 pub struct SearchEngine {
-    /// Documents in the index, allocated during initialization only
-    /// This is the only heap allocation in the struct and it's fixed-size
     documents: Box<ArrayVec<Document, MAX_DOCUMENTS>>,
 }
 
@@ -108,24 +88,13 @@ impl Default for SearchEngine {
 }
 
 impl SearchEngine {
-    /// Creates a new search engine with a single fixed allocation
-    ///
-    /// # Allocation Guarantees
-    /// - Allocates exactly one `Box<ArrayVec>` during initialization
-    /// - No further allocations occur after initialization
-    /// - All internal buffers use fixed-size stack allocation
     #[must_use = "SearchEngine must be used to store and search documents"]
     pub fn new() -> Self {
-        Self { documents: Box::new(ArrayVec::new()) }
+        Self {
+            documents: Box::new(ArrayVec::new()),
+        }
     }
 
-    /// Load an existing search engine from an index file
-    ///
-    /// # Errors
-    /// Returns error if:
-    /// - File cannot be read
-    /// - File format is invalid
-    /// - Document limit would be exceeded
     pub fn load(path: &Path) -> Result<Self> {
         let mut file =
             File::open(path).map_err(|e| Error::search(&format!("Failed to open index: {e}")))?;
@@ -141,7 +110,10 @@ impl SearchEngine {
         file.read_exact(&mut version)
             .map_err(|e| Error::search(&format!("Failed to read version: {e}")))?;
         if version[0] != VERSION {
-            return Err(Error::search(&format!("Unsupported index version: {}", version[0])));
+            return Err(Error::search(&format!(
+                "Unsupported index version: {}",
+                version[0]
+            )));
         }
 
         let mut ndocs = [0u8; 4];
@@ -168,7 +140,9 @@ impl SearchEngine {
                 let mut byte = [0u8; 1];
                 file.read_exact(&mut byte)
                     .map_err(|e| Error::search(&format!("Failed to read path: {e}")))?;
-                path_buf.try_push(byte[0]).map_err(|_| Error::search("Path too long"))?;
+                path_buf
+                    .try_push(byte[0])
+                    .map_err(|_| Error::search("Path too long"))?;
             }
 
             let mut content_len = [0u8; 2];
@@ -184,7 +158,9 @@ impl SearchEngine {
                 let mut byte = [0u8; 1];
                 file.read_exact(&mut byte)
                     .map_err(|e| Error::search(&format!("Failed to read content: {e}")))?;
-                content.try_push(byte[0]).map_err(|_| Error::search("Content too large"))?;
+                content
+                    .try_push(byte[0])
+                    .map_err(|_| Error::search("Content too large"))?;
             }
 
             let path_str = String::from_utf8_lossy(&path_buf).into_owned();
@@ -198,12 +174,6 @@ impl SearchEngine {
         Ok(engine)
     }
 
-    /// Save the search engine to an index file
-    ///
-    /// # Errors
-    /// Returns error if:
-    /// - File cannot be written
-    /// - Path lengths exceed limits
     pub fn save(&self, path: &Path) -> Result<()> {
         let mut file = File::create(path)
             .map_err(|e| Error::search(&format!("Failed to create index: {e}")))?;
@@ -243,24 +213,22 @@ impl SearchEngine {
         Ok(())
     }
 
-    /// Add a document to the index
-    ///
-    /// # Errors
-    /// Returns error if:
-    /// - Document limit exceeded
-    /// - Content too large
     pub fn add_document(&mut self, path: &Path, content: &str) -> Result<()> {
         let mut doc_content = ArrayVec::new();
         for &b in content.as_bytes() {
-            doc_content.try_push(b).map_err(|_| Error::search("Content too large"))?;
+            doc_content
+                .try_push(b)
+                .map_err(|_| Error::search("Content too large"))?;
         }
 
         self.documents
-            .try_push(Document { path: path.to_path_buf(), content: doc_content })
+            .try_push(Document {
+                path: path.to_path_buf(),
+                content: doc_content,
+            })
             .map_err(|_| Error::search("Too many documents"))
     }
 
-    /// Check if a term matches content at word boundaries
     #[must_use]
     pub fn term_matches(term: &[u8], content: &[u8]) -> bool {
         if term.is_empty() || content.is_empty() || term.len() > content.len() {
@@ -305,7 +273,6 @@ impl SearchEngine {
         false
     }
 
-    /// Calculate normalized relevance score for a document
     #[must_use]
     pub fn calculate_score(query: &str, doc: &Document) -> f32 {
         let mut score = 0.0_f32;
@@ -348,17 +315,6 @@ impl SearchEngine {
         }
     }
 
-    /// Search for documents matching a query
-    ///
-    /// # Errors
-    /// Returns error if:
-    /// - Query is invalid (see `validate_query`)
-    /// - Internal search buffers would overflow
-    ///
-    /// # Panics
-    /// Panics if:
-    /// - Score buffer would overflow `MAX_DOCUMENTS`
-    /// - Internal invariants are violated
     pub fn search(&self, query: &str) -> Result<ArrayVec<SearchResult, MAX_RESULTS>> {
         validate_query(query)?;
 
@@ -370,7 +326,11 @@ impl SearchEngine {
 
         for (idx, doc) in self.documents.iter().enumerate() {
             let score = if is_glob_query {
-                if glob_matcher.is_match(&doc.path) { 100.0 } else { 0.0 }
+                if glob_matcher.is_match(&doc.path) {
+                    100.0
+                } else {
+                    0.0
+                }
             } else {
                 let base_score = Self::calculate_score(query, doc);
                 if glob_matcher.is_match(&doc.path) {
@@ -395,7 +355,10 @@ impl SearchEngine {
 
         for (score, idx) in scores.iter().take(MAX_RESULTS) {
             results
-                .try_push(SearchResult { path: self.documents[*idx].path.clone(), score: *score })
+                .try_push(SearchResult {
+                    path: self.documents[*idx].path.clone(),
+                    score: *score,
+                })
                 .map_err(|_| Error::search("Too many results"))?;
         }
 
@@ -405,13 +368,6 @@ impl SearchEngine {
     }
 }
 
-/// Validate a search query
-///
-/// # Errors
-/// Returns error if:
-/// - Query is empty
-/// - Query exceeds `MAX_TERM_LENGTH`
-/// - Query contains invalid characters
 pub fn validate_query(query: &str) -> Result<()> {
     if query.is_empty() {
         return Err(Error::search("Query must not be empty"));
@@ -485,7 +441,9 @@ mod tests {
                 &format!("test_{i}.txt"),
                 &format!("Document {i} with content"),
             );
-            engine.add_document(&path, &format!("Document {i} with content")).unwrap();
+            engine
+                .add_document(&path, &format!("Document {i} with content"))
+                .unwrap();
         }
 
         let results = engine.search("Document").unwrap();
@@ -517,7 +475,9 @@ mod tests {
         let path1 = create_test_file(&temp_dir, "rust_guide.txt", "rust programming guide");
         let path2 = create_test_file(&temp_dir, "other.txt", "rust content");
 
-        engine.add_document(&path1, "rust programming guide").unwrap();
+        engine
+            .add_document(&path1, "rust programming guide")
+            .unwrap();
         engine.add_document(&path2, "rust content").unwrap();
 
         let results = engine.search("rust").unwrap();
@@ -569,7 +529,9 @@ mod tests {
         let path1 = create_test_file(&temp_dir, "test1.txt", "rust programming guide");
         let path2 = create_test_file(&temp_dir, "rust_book.txt", "some other content");
 
-        engine.add_document(&path1, "rust programming guide").unwrap();
+        engine
+            .add_document(&path1, "rust programming guide")
+            .unwrap();
         engine.add_document(&path2, "some other content").unwrap();
 
         let results = engine.search("rust").unwrap();
@@ -592,7 +554,10 @@ mod tests {
 
         assert_eq!(loaded.documents.len(), 1);
         assert_eq!(loaded.documents[0].path, doc_path);
-        assert_eq!(String::from_utf8_lossy(&loaded.documents[0].content), "test content");
+        assert_eq!(
+            String::from_utf8_lossy(&loaded.documents[0].content),
+            "test content"
+        );
     }
 
     #[test]
@@ -601,7 +566,10 @@ mod tests {
         let invalid_path = temp_dir.path().join("invalid.idx");
         File::create(&invalid_path).unwrap();
 
-        assert!(matches!(SearchEngine::load(&invalid_path), Err(Error::Search(_))));
+        assert!(matches!(
+            SearchEngine::load(&invalid_path),
+            Err(Error::Search(_))
+        ));
     }
 
     #[test]
@@ -633,7 +601,10 @@ mod tests {
         assert_eq!(loaded.documents.len(), 5);
         for (i, doc) in loaded.documents.iter().enumerate() {
             assert_eq!(doc.path, paths[i]);
-            assert_eq!(String::from_utf8_lossy(&doc.content), format!("content {i}"));
+            assert_eq!(
+                String::from_utf8_lossy(&doc.content),
+                format!("content {i}")
+            );
         }
     }
 

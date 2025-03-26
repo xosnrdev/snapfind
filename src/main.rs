@@ -1,15 +1,13 @@
+mod snap_find;
+
 use std::path::{Path, PathBuf};
 use std::{fs, process};
 
 use clap::{Parser, Subcommand};
 use clap_cargo::style::CLAP_STYLING;
-use snapfind::allocator::TrackingAllocator;
-use snapfind::error::{Error, Result};
-use snapfind::text::TextDetector;
-use snapfind::{crawler, search};
-
-#[global_allocator]
-static ALLOCATOR: TrackingAllocator = TrackingAllocator::new();
+use snap_find::error::{Error, Result};
+use snap_find::text::TextDetector;
+use snap_find::{crawler, search};
 
 #[derive(Debug, Parser)]
 #[command(author, version, about, display_name="", styles = CLAP_STYLING)]
@@ -32,7 +30,7 @@ enum Command {
         query: String,
         /// Directory to search in (must be indexed first)
         #[arg(default_value = ".")]
-        dir:   PathBuf,
+        dir: PathBuf,
     },
 }
 
@@ -85,18 +83,18 @@ fn index_directory(dir: &Path) -> Result<()> {
                         {
                             Ok(()) => {
                                 total_files += 1;
-                            },
+                            }
                             Err(e) => {
                                 eprintln!("\nIndexing stopped due to error.");
                                 return Err(e);
-                            },
+                            }
                         }
                     }
-                },
+                }
                 Err(e) => {
                     had_errors = true;
                     eprintln!("Error: Failed to read {}: {e}", file.display());
-                },
+                }
             }
         }
     }
@@ -120,9 +118,6 @@ fn index_directory(dir: &Path) -> Result<()> {
     engine.save(&index_path)?;
     println!("- Index saved to {}", index_path.display());
 
-    ALLOCATOR.end_init();
-    println!("- Peak memory usage: {} bytes", ALLOCATOR.peak());
-
     Ok(())
 }
 
@@ -132,10 +127,16 @@ fn search_files(query: &str, dir: &Path) -> Result<()> {
     search::validate_query(query)?;
 
     if !dir.exists() {
-        return Err(Error::search(&format!("Directory not found: {}", dir.display())));
+        return Err(Error::search(&format!(
+            "Directory not found: {}",
+            dir.display()
+        )));
     }
     if !dir.is_dir() {
-        return Err(Error::search(&format!("Not a directory: {}", dir.display())));
+        return Err(Error::search(&format!(
+            "Not a directory: {}",
+            dir.display()
+        )));
     }
 
     let engine = if let Ok(loaded) = search::SearchEngine::load(&get_index_path(dir)) {
@@ -182,24 +183,36 @@ fn main() {
     let result = match cli.command {
         Command::Index { dir } => {
             if !dir.exists() {
-                Err(Error::search(&format!("Directory not found: {}", dir.display())))
+                Err(Error::search(&format!(
+                    "Directory not found: {}",
+                    dir.display()
+                )))
             } else if !dir.is_dir() {
-                Err(Error::search(&format!("Not a directory: {}", dir.display())))
+                Err(Error::search(&format!(
+                    "Not a directory: {}",
+                    dir.display()
+                )))
             } else {
                 index_directory(&dir)
             }
-        },
+        }
         Command::Search { query, dir } => {
             if !dir.exists() {
-                Err(Error::search(&format!("Directory not found: {}", dir.display())))
+                Err(Error::search(&format!(
+                    "Directory not found: {}",
+                    dir.display()
+                )))
             } else if !dir.is_dir() {
-                Err(Error::search(&format!("Not a directory: {}", dir.display())))
+                Err(Error::search(&format!(
+                    "Not a directory: {}",
+                    dir.display()
+                )))
             } else if query.is_empty() {
                 Err(Error::search("Search query cannot be empty"))
             } else {
                 search_files(&query, &dir)
             }
-        },
+        }
     };
 
     if let Err(e) = result {
