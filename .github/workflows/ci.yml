@@ -37,7 +37,7 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: fmt
-          args: -- --config-path rustfmt.toml --check
+          args: --check
       
       - name: Run clippy
         uses: actions-rs/cargo@v1

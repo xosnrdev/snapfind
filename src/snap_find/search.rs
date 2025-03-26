@@ -1,64 +1,51 @@
-//! Search engine implementation
-
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use arrayvec::ArrayVec;
 
-use crate::error::{Error, Result};
-use crate::types::SearchResult;
+use super::error::{SnapError, SnapResult};
 
-/// Maximum number of search results to return
 pub const MAX_RESULTS: usize = 100;
-
-/// Maximum number of documents to store
 pub const MAX_DOCUMENTS: usize = 100;
-
-/// Maximum length of stored content in bytes
 pub const MAX_CONTENT_LENGTH: usize = 1_000;
-
-/// Maximum term length in bytes
 pub const MAX_TERM_LENGTH: usize = 50;
-
-/// Maximum path length in bytes
 pub const MAX_PATH_BYTES: usize = 1024;
-
-/// Index file magic number
 pub const MAGIC: [u8; 4] = *b"SNAP";
-
-/// Index file version
 pub const VERSION: u8 = 1;
-
-/// Maximum number of glob patterns to compile
 pub const MAX_PATTERNS: usize = 10;
 
-/// Document in the search index with fixed-size buffers
+pub const ERROR_INVALID_QUERY: i32 = 301;
+pub const ERROR_INVALID_INDEX: i32 = 302;
+pub const ERROR_TOO_MANY_DOCUMENTS: i32 = 303;
+pub const ERROR_CONTENT_TOO_LARGE: i32 = 304;
+pub const ERROR_PATH_TOO_LONG: i32 = 305;
+
+#[derive(Debug, Clone)]
+pub struct SearchResult {
+    pub path: PathBuf,
+    pub score: f32,
+}
+
 #[derive(Debug)]
 pub struct Document {
-    /// Path to the document
-    pub path:    PathBuf,
-    /// Content of the document as raw bytes
+    pub path: PathBuf,
     pub content: ArrayVec<u8, MAX_CONTENT_LENGTH>,
 }
 
-/// Glob pattern matcher with fixed-size buffers
 #[derive(Debug)]
 struct GlobMatcher {
-    /// Compiled glob patterns
     patterns: ArrayVec<globset::GlobMatcher, MAX_PATTERNS>,
 }
 
 impl GlobMatcher {
-    /// Create a new glob matcher
-    ///
-    /// # Errors
-    /// Returns error if pattern is invalid
-    fn new(pattern: &str) -> Result<Self> {
+    fn new(pattern: &str) -> SnapResult<Self> {
         assert!(!pattern.is_empty(), "Pattern must not be empty");
         assert!(pattern.len() <= MAX_TERM_LENGTH, "Pattern too long");
 
-        let mut matcher = Self { patterns: ArrayVec::new() };
+        let mut matcher = Self {
+            patterns: ArrayVec::new(),
+        };
 
         for part in pattern.split_whitespace() {
             let pattern_str = if !part.starts_with('*') && part.contains('*') {
@@ -71,20 +58,24 @@ impl GlobMatcher {
                 .case_insensitive(true)
                 .literal_separator(false)
                 .build()
-                .map_err(|e| Error::search(&format!("Invalid pattern: {e}")))?;
+                .map_err(|e| {
+                    SnapError::with_code(format!("Invalid pattern: {e}"), ERROR_INVALID_QUERY)
+                })?;
 
             matcher
                 .patterns
                 .try_push(glob.compile_matcher())
-                .map_err(|_| Error::search("Too many pattern parts"))?;
+                .map_err(|_| SnapError::with_code("Too many pattern parts", ERROR_INVALID_QUERY))?;
         }
 
-        assert!(!matcher.patterns.is_empty(), "Must have at least one pattern");
+        assert!(
+            !matcher.patterns.is_empty(),
+            "Must have at least one pattern"
+        );
 
         Ok(matcher)
     }
 
-    /// Check if a path matches any pattern
     fn is_match(&self, path: &Path) -> bool {
         assert!(path.as_os_str().len() <= MAX_PATH_BYTES, "Path too long");
 
@@ -93,11 +84,8 @@ impl GlobMatcher {
     }
 }
 
-/// Simple search engine with fixed-size indices and zero post-init allocation
 #[derive(Debug)]
 pub struct SearchEngine {
-    /// Documents in the index, allocated during initialization only
-    /// This is the only heap allocation in the struct and it's fixed-size
     documents: Box<ArrayVec<Document, MAX_DOCUMENTS>>,
 }
 
@@ -108,83 +96,114 @@ impl Default for SearchEngine {
 }
 
 impl SearchEngine {
-    /// Creates a new search engine with a single fixed allocation
-    ///
-    /// # Allocation Guarantees
-    /// - Allocates exactly one `Box<ArrayVec>` during initialization
-    /// - No further allocations occur after initialization
-    /// - All internal buffers use fixed-size stack allocation
     #[must_use = "SearchEngine must be used to store and search documents"]
     pub fn new() -> Self {
-        Self { documents: Box::new(ArrayVec::new()) }
+        Self {
+            documents: Box::new(ArrayVec::new()),
+        }
     }
 
-    /// Load an existing search engine from an index file
-    ///
-    /// # Errors
-    /// Returns error if:
-    /// - File cannot be read
-    /// - File format is invalid
-    /// - Document limit would be exceeded
-    pub fn load(path: &Path) -> Result<Self> {
-        let mut file =
-            File::open(path).map_err(|e| Error::search(&format!("Failed to open index: {e}")))?;
+    pub fn load(path: &Path) -> SnapResult<Self> {
+        let mut file = File::open(path).map_err(|e| {
+            SnapError::with_code(format!("Failed to open index: {e}"), ERROR_INVALID_INDEX)
+        })?;
 
         let mut magic = [0u8; 4];
-        file.read_exact(&mut magic)
-            .map_err(|e| Error::search(&format!("Failed to read magic: {e}")))?;
+        file.read_exact(&mut magic).map_err(|e| {
+            SnapError::with_code(format!("Failed to read magic: {e}"), ERROR_INVALID_INDEX)
+        })?;
         if magic != MAGIC {
-            return Err(Error::search("Invalid index file format"));
+            return Err(anyhow::Error::from(SnapError::with_code(
+                "Invalid index file format",
+                ERROR_INVALID_INDEX,
+            )));
         }
 
         let mut version = [0u8; 1];
-        file.read_exact(&mut version)
-            .map_err(|e| Error::search(&format!("Failed to read version: {e}")))?;
+        file.read_exact(&mut version).map_err(|e| {
+            SnapError::with_code(format!("Failed to read version: {e}"), ERROR_INVALID_INDEX)
+        })?;
         if version[0] != VERSION {
-            return Err(Error::search(&format!("Unsupported index version: {}", version[0])));
+            return Err(anyhow::Error::from(SnapError::with_code(
+                format!("Unsupported index version: {}", version[0]),
+                ERROR_INVALID_INDEX,
+            )));
         }
 
         let mut ndocs = [0u8; 4];
-        file.read_exact(&mut ndocs)
-            .map_err(|e| Error::search(&format!("Failed to read document count: {e}")))?;
+        file.read_exact(&mut ndocs).map_err(|e| {
+            SnapError::with_code(
+                format!("Failed to read document count: {e}"),
+                ERROR_INVALID_INDEX,
+            )
+        })?;
         let ndocs = u32::from_le_bytes(ndocs) as usize;
         if ndocs > MAX_DOCUMENTS {
-            return Err(Error::search("Too many documents in index"));
+            return Err(anyhow::Error::from(SnapError::with_code(
+                "Too many documents in index",
+                ERROR_TOO_MANY_DOCUMENTS,
+            )));
         }
 
         let mut engine = Self::new();
 
         for _ in 0..ndocs {
             let mut path_len = [0u8; 2];
-            file.read_exact(&mut path_len)
-                .map_err(|e| Error::search(&format!("Failed to read path length: {e}")))?;
+            file.read_exact(&mut path_len).map_err(|e| {
+                SnapError::with_code(
+                    format!("Failed to read path length: {e}"),
+                    ERROR_INVALID_INDEX,
+                )
+            })?;
             let path_len = u16::from_le_bytes(path_len) as usize;
             if path_len > MAX_PATH_BYTES {
-                return Err(Error::search("Path too long"));
+                return Err(anyhow::Error::from(SnapError::with_code(
+                    "Path too long",
+                    ERROR_PATH_TOO_LONG,
+                )));
             }
 
             let mut path_buf = ArrayVec::<u8, MAX_PATH_BYTES>::new();
             for _ in 0..path_len {
                 let mut byte = [0u8; 1];
-                file.read_exact(&mut byte)
-                    .map_err(|e| Error::search(&format!("Failed to read path: {e}")))?;
-                path_buf.try_push(byte[0]).map_err(|_| Error::search("Path too long"))?;
+                file.read_exact(&mut byte).map_err(|e| {
+                    SnapError::with_code(format!("Failed to read path: {e}"), ERROR_INVALID_INDEX)
+                })?;
+                path_buf.try_push(byte[0]).map_err(|_| {
+                    anyhow::Error::from(SnapError::with_code("Path too long", ERROR_PATH_TOO_LONG))
+                })?;
             }
 
             let mut content_len = [0u8; 2];
-            file.read_exact(&mut content_len)
-                .map_err(|e| Error::search(&format!("Failed to read content length: {e}")))?;
+            file.read_exact(&mut content_len).map_err(|e| {
+                SnapError::with_code(
+                    format!("Failed to read content length: {e}"),
+                    ERROR_INVALID_INDEX,
+                )
+            })?;
             let content_len = u16::from_le_bytes(content_len) as usize;
             if content_len > MAX_CONTENT_LENGTH {
-                return Err(Error::search("Content too large"));
+                return Err(anyhow::Error::from(SnapError::with_code(
+                    "Content too large",
+                    ERROR_CONTENT_TOO_LARGE,
+                )));
             }
 
             let mut content = ArrayVec::new();
             for _ in 0..content_len {
                 let mut byte = [0u8; 1];
-                file.read_exact(&mut byte)
-                    .map_err(|e| Error::search(&format!("Failed to read content: {e}")))?;
-                content.try_push(byte[0]).map_err(|_| Error::search("Content too large"))?;
+                file.read_exact(&mut byte).map_err(|e| {
+                    SnapError::with_code(
+                        format!("Failed to read content: {e}"),
+                        ERROR_INVALID_INDEX,
+                    )
+                })?;
+                content.try_push(byte[0]).map_err(|_| {
+                    anyhow::Error::from(SnapError::with_code(
+                        "Content too large",
+                        ERROR_CONTENT_TOO_LARGE,
+                    ))
+                })?;
             }
 
             let path_str = String::from_utf8_lossy(&path_buf).into_owned();
@@ -192,75 +211,120 @@ impl SearchEngine {
             engine
                 .documents
                 .try_push(Document { path, content })
-                .map_err(|_| Error::search("Too many documents"))?;
+                .map_err(|_| {
+                    anyhow::Error::from(SnapError::with_code(
+                        "Too many documents",
+                        ERROR_TOO_MANY_DOCUMENTS,
+                    ))
+                })?;
         }
 
         Ok(engine)
     }
 
-    /// Save the search engine to an index file
-    ///
-    /// # Errors
-    /// Returns error if:
-    /// - File cannot be written
-    /// - Path lengths exceed limits
-    pub fn save(&self, path: &Path) -> Result<()> {
-        let mut file = File::create(path)
-            .map_err(|e| Error::search(&format!("Failed to create index: {e}")))?;
+    pub fn save(&self, path: &Path) -> SnapResult<()> {
+        let mut file = File::create(path).map_err(|e| {
+            SnapError::with_code(format!("Failed to create index: {e}"), ERROR_INVALID_INDEX)
+        })?;
 
-        file.write_all(&MAGIC)
-            .map_err(|e| Error::search(&format!("Failed to write magic: {e}")))?;
-        file.write_all(&[VERSION])
-            .map_err(|e| Error::search(&format!("Failed to write version: {e}")))?;
+        file.write_all(&MAGIC).map_err(|e| {
+            SnapError::with_code(format!("Failed to write magic: {e}"), ERROR_INVALID_INDEX)
+        })?;
+        file.write_all(&[VERSION]).map_err(|e| {
+            SnapError::with_code(format!("Failed to write version: {e}"), ERROR_INVALID_INDEX)
+        })?;
 
-        let ndocs = u32::try_from(self.documents.len())
-            .map_err(|_| Error::search("Too many documents for index format"))?;
-        file.write_all(&ndocs.to_le_bytes())
-            .map_err(|e| Error::search(&format!("Failed to write document count: {e}")))?;
+        let ndocs = u32::try_from(self.documents.len()).map_err(|_| {
+            SnapError::with_code(
+                "Too many documents for index format",
+                ERROR_TOO_MANY_DOCUMENTS,
+            )
+        })?;
+        file.write_all(&ndocs.to_le_bytes()).map_err(|e| {
+            SnapError::with_code(
+                format!("Failed to write document count: {e}"),
+                ERROR_INVALID_INDEX,
+            )
+        })?;
 
         for doc in self.documents.iter() {
             let path_str = doc.path.to_string_lossy();
             let path_bytes = path_str.as_bytes();
             if path_bytes.len() > MAX_PATH_BYTES {
-                return Err(Error::search("Path too long"));
+                return Err(anyhow::Error::from(SnapError::with_code(
+                    "Path too long",
+                    ERROR_PATH_TOO_LONG,
+                )));
             }
 
-            let path_len = u16::try_from(path_bytes.len())
-                .map_err(|_| Error::search("Path too long for index format"))?;
-            file.write_all(&path_len.to_le_bytes())
-                .map_err(|e| Error::search(&format!("Failed to write path length: {e}")))?;
-            file.write_all(path_bytes)
-                .map_err(|e| Error::search(&format!("Failed to write path: {e}")))?;
+            let path_len = u16::try_from(path_bytes.len()).map_err(|_| {
+                anyhow::Error::from(SnapError::with_code(
+                    "Path too long for index format",
+                    ERROR_PATH_TOO_LONG,
+                ))
+            })?;
+            file.write_all(&path_len.to_le_bytes()).map_err(|e| {
+                anyhow::Error::from(SnapError::with_code(
+                    format!("Failed to write path length: {e}"),
+                    ERROR_INVALID_INDEX,
+                ))
+            })?;
+            file.write_all(path_bytes).map_err(|e| {
+                anyhow::Error::from(SnapError::with_code(
+                    format!("Failed to write path: {e}"),
+                    ERROR_INVALID_INDEX,
+                ))
+            })?;
 
-            let content_len = u16::try_from(doc.content.len())
-                .map_err(|_| Error::search("Content too large for index format"))?;
-            file.write_all(&content_len.to_le_bytes())
-                .map_err(|e| Error::search(&format!("Failed to write content length: {e}")))?;
-            file.write_all(&doc.content)
-                .map_err(|e| Error::search(&format!("Failed to write content: {e}")))?;
+            let content_len = u16::try_from(doc.content.len()).map_err(|_| {
+                anyhow::Error::from(SnapError::with_code(
+                    "Content too large for index format",
+                    ERROR_CONTENT_TOO_LARGE,
+                ))
+            })?;
+            file.write_all(&content_len.to_le_bytes()).map_err(|e| {
+                anyhow::Error::from(SnapError::with_code(
+                    format!("Failed to write content length: {e}"),
+                    ERROR_INVALID_INDEX,
+                ))
+            })?;
+            file.write_all(&doc.content).map_err(|e| {
+                anyhow::Error::from(SnapError::with_code(
+                    format!("Failed to write content: {e}"),
+                    ERROR_INVALID_INDEX,
+                ))
+            })?;
         }
 
         Ok(())
     }
 
-    /// Add a document to the index
-    ///
-    /// # Errors
-    /// Returns error if:
-    /// - Document limit exceeded
-    /// - Content too large
-    pub fn add_document(&mut self, path: &Path, content: &str) -> Result<()> {
+    pub fn add_document(&mut self, path: &Path, content: &str) -> SnapResult<()> {
         let mut doc_content = ArrayVec::new();
         for &b in content.as_bytes() {
-            doc_content.try_push(b).map_err(|_| Error::search("Content too large"))?;
+            doc_content.try_push(b).map_err(|_| {
+                anyhow::Error::from(SnapError::with_code(
+                    "Content too large",
+                    ERROR_CONTENT_TOO_LARGE,
+                ))
+            })?;
         }
 
         self.documents
-            .try_push(Document { path: path.to_path_buf(), content: doc_content })
-            .map_err(|_| Error::search("Too many documents"))
+            .try_push(Document {
+                path: path.to_path_buf(),
+                content: doc_content,
+            })
+            .map_err(|_| {
+                anyhow::Error::from(SnapError::with_code(
+                    "Too many documents",
+                    ERROR_TOO_MANY_DOCUMENTS,
+                ))
+            })?;
+
+        Ok(())
     }
 
-    /// Check if a term matches content at word boundaries
     #[must_use]
     pub fn term_matches(term: &[u8], content: &[u8]) -> bool {
         if term.is_empty() || content.is_empty() || term.len() > content.len() {
@@ -305,7 +369,6 @@ impl SearchEngine {
         false
     }
 
-    /// Calculate normalized relevance score for a document
     #[must_use]
     pub fn calculate_score(query: &str, doc: &Document) -> f32 {
         let mut score = 0.0_f32;
@@ -348,18 +411,7 @@ impl SearchEngine {
         }
     }
 
-    /// Search for documents matching a query
-    ///
-    /// # Errors
-    /// Returns error if:
-    /// - Query is invalid (see `validate_query`)
-    /// - Internal search buffers would overflow
-    ///
-    /// # Panics
-    /// Panics if:
-    /// - Score buffer would overflow `MAX_DOCUMENTS`
-    /// - Internal invariants are violated
-    pub fn search(&self, query: &str) -> Result<ArrayVec<SearchResult, MAX_RESULTS>> {
+    pub fn search(&self, query: &str) -> SnapResult<ArrayVec<SearchResult, MAX_RESULTS>> {
         validate_query(query)?;
 
         let mut results = ArrayVec::new();
@@ -370,7 +422,11 @@ impl SearchEngine {
 
         for (idx, doc) in self.documents.iter().enumerate() {
             let score = if is_glob_query {
-                if glob_matcher.is_match(&doc.path) { 100.0 } else { 0.0 }
+                if glob_matcher.is_match(&doc.path) {
+                    100.0
+                } else {
+                    0.0
+                }
             } else {
                 let base_score = Self::calculate_score(query, doc);
                 if glob_matcher.is_match(&doc.path) {
@@ -381,9 +437,12 @@ impl SearchEngine {
             };
 
             if score > 0.0 {
-                scores
-                    .try_push((score, idx))
-                    .map_err(|_| Error::search("Too many matching documents"))?;
+                scores.try_push((score, idx)).map_err(|_| {
+                    anyhow::Error::from(SnapError::with_code(
+                        "Too many matching documents",
+                        ERROR_TOO_MANY_DOCUMENTS,
+                    ))
+                })?;
             }
         }
 
@@ -395,8 +454,16 @@ impl SearchEngine {
 
         for (score, idx) in scores.iter().take(MAX_RESULTS) {
             results
-                .try_push(SearchResult { path: self.documents[*idx].path.clone(), score: *score })
-                .map_err(|_| Error::search("Too many results"))?;
+                .try_push(SearchResult {
+                    path: self.documents[*idx].path.clone(),
+                    score: *score,
+                })
+                .map_err(|_| {
+                    anyhow::Error::from(SnapError::with_code(
+                        "Too many results",
+                        ERROR_TOO_MANY_DOCUMENTS,
+                    ))
+                })?;
         }
 
         assert!(results.len() <= MAX_RESULTS, "Result buffer overflow");
@@ -405,24 +472,26 @@ impl SearchEngine {
     }
 }
 
-/// Validate a search query
-///
-/// # Errors
-/// Returns error if:
-/// - Query is empty
-/// - Query exceeds `MAX_TERM_LENGTH`
-/// - Query contains invalid characters
-pub fn validate_query(query: &str) -> Result<()> {
+pub fn validate_query(query: &str) -> SnapResult<()> {
     if query.is_empty() {
-        return Err(Error::search("Query must not be empty"));
+        return Err(anyhow::Error::from(SnapError::with_code(
+            "Query must not be empty",
+            ERROR_INVALID_QUERY,
+        )));
     }
 
     if query.len() > MAX_TERM_LENGTH {
-        return Err(Error::search("Query too long"));
+        return Err(anyhow::Error::from(SnapError::with_code(
+            "Query too long",
+            ERROR_INVALID_QUERY,
+        )));
     }
 
     if query.contains('\0') || !query.chars().all(|c| c.is_ascii() || c.is_whitespace()) {
-        return Err(Error::search("Query contains invalid characters"));
+        return Err(anyhow::Error::from(SnapError::with_code(
+            "Query contains invalid characters",
+            ERROR_INVALID_QUERY,
+        )));
     }
 
     Ok(())
@@ -485,7 +554,9 @@ mod tests {
                 &format!("test_{i}.txt"),
                 &format!("Document {i} with content"),
             );
-            engine.add_document(&path, &format!("Document {i} with content")).unwrap();
+            engine
+                .add_document(&path, &format!("Document {i} with content"))
+                .unwrap();
         }
 
         let results = engine.search("Document").unwrap();
@@ -517,7 +588,9 @@ mod tests {
         let path1 = create_test_file(&temp_dir, "rust_guide.txt", "rust programming guide");
         let path2 = create_test_file(&temp_dir, "other.txt", "rust content");
 
-        engine.add_document(&path1, "rust programming guide").unwrap();
+        engine
+            .add_document(&path1, "rust programming guide")
+            .unwrap();
         engine.add_document(&path2, "rust content").unwrap();
 
         let results = engine.search("rust").unwrap();
@@ -569,7 +642,9 @@ mod tests {
         let path1 = create_test_file(&temp_dir, "test1.txt", "rust programming guide");
         let path2 = create_test_file(&temp_dir, "rust_book.txt", "some other content");
 
-        engine.add_document(&path1, "rust programming guide").unwrap();
+        engine
+            .add_document(&path1, "rust programming guide")
+            .unwrap();
         engine.add_document(&path2, "some other content").unwrap();
 
         let results = engine.search("rust").unwrap();
@@ -592,7 +667,10 @@ mod tests {
 
         assert_eq!(loaded.documents.len(), 1);
         assert_eq!(loaded.documents[0].path, doc_path);
-        assert_eq!(String::from_utf8_lossy(&loaded.documents[0].content), "test content");
+        assert_eq!(
+            String::from_utf8_lossy(&loaded.documents[0].content),
+            "test content"
+        );
     }
 
     #[test]
@@ -601,7 +679,13 @@ mod tests {
         let invalid_path = temp_dir.path().join("invalid.idx");
         File::create(&invalid_path).unwrap();
 
-        assert!(matches!(SearchEngine::load(&invalid_path), Err(Error::Search(_))));
+        let result = SearchEngine::load(&invalid_path);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("magic") || err.contains("index") || err.contains("Invalid"),
+            "Error should mention file format issue. Got: {err}"
+        );
     }
 
     #[test]
@@ -633,7 +717,10 @@ mod tests {
         assert_eq!(loaded.documents.len(), 5);
         for (i, doc) in loaded.documents.iter().enumerate() {
             assert_eq!(doc.path, paths[i]);
-            assert_eq!(String::from_utf8_lossy(&doc.content), format!("content {i}"));
+            assert_eq!(
+                String::from_utf8_lossy(&doc.content),
+                format!("content {i}")
+            );
         }
     }
 
