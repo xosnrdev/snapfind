@@ -1,13 +1,14 @@
 # SnapFind
 
-Fast file search tool that understands content.
+Fast, memory-efficient file search utility with predictable resource usage.
 
 ## Features
 
-- Content-aware search (understands text, markdown, source code, config files)
-- Low memory usage (<500KB)
-- Fast indexing and search
-- No external dependencies
+- [x] Content-aware search with relevance scoring
+- [x] Fixed memory bounds (no dynamic allocations after initialization)
+- [x] Text type detection (plain text, markdown, source code, config files)
+- [x] Glob pattern matching
+- [x] Fast indexing with bounded resource usage
 
 ## Install
 
@@ -20,20 +21,23 @@ cargo install snapfind
 Index a directory:
 
 ```bash
-snap index /path/to/dir
+snapfind index [DIR]
 ```
 
 Search for files:
 
 ```bash
-snap search "your query" /path/to/dir
+snapfind search "your query" [DIR]
 ```
 
-## Limits
+## Limitations
 
+- Maximum number of files: 1,000
+- Maximum directory depth: 1,000
 - Maximum file size: 10MB
-- Supported content: Plain text, Markdown, Source code, Config files
-- Binary files are automatically skipped
+- Maximum indexed content: 1,000 bytes per file
+- Maximum query length: 50 bytes
+- Only handles text files (binary files are excluded)
 
 ## Examples
 
@@ -41,25 +45,14 @@ Search by content:
 
 ```bash
 # Find code
-snap search "fn main" ~/code
+snapfind search "fn main" ~/code
 
 # Find documentation
-snap search "# Introduction" ~/docs
+snapfind search "# Introduction" ~/docs
+
+# Use glob patterns
+snapfind search "*.txt" ~/documents
 ```
-
-## Common Messages
-
-Errors:
-
-- "Directory not found": Check if the path exists
-- "No index found": Run `snap index` first
-- "File too large": Files over 10MB are skipped
-
-Tips:
-
-- Index before searching
-- Use quotes for multi-word queries
-- Check file permissions if indexing fails
 
 ## License
 

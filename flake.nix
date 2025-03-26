@@ -1,5 +1,5 @@
 {
-  description = "Fast file search tool that understands content.";
+  description = "Fast, memory-efficient file search utility with predictable resource usage";
 
   inputs = {
     nixpkgs.url =
