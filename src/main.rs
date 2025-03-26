@@ -1,13 +1,13 @@
-mod snap_find;
+mod snapfind;
 
 use std::path::{Path, PathBuf};
 use std::{fs, process};
 
 use clap::{Parser, Subcommand};
 use clap_cargo::style::CLAP_STYLING;
-use snap_find::error::{SnapError, SnapResult};
-use snap_find::text::TextDetector;
-use snap_find::{crawler, search};
+use snapfind::error::{SnapError, SnapResult};
+use snapfind::text::TextDetector;
+use snapfind::{crawler, search};
 
 #[derive(Debug, Parser)]
 #[command(author, version, about, display_name="", styles = CLAP_STYLING)]
@@ -221,7 +221,7 @@ fn main() {
 
     if let Err(e) = result {
         eprintln!("{}", e);
-        if let Some(err) = e.downcast_ref::<snap_find::error::SnapError>() {
+        if let Some(err) = e.downcast_ref::<snapfind::error::SnapError>() {
             process::exit(err.code());
         } else {
             process::exit(1);
