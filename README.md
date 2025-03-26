@@ -21,13 +21,13 @@ cargo install snapfind
 Index a directory:
 
 ```bash
-snapfind index [DIR]
+snap index [DIR]
 ```
 
 Search for files:
 
 ```bash
-snapfind search "your query" [DIR]
+snap search "your query" [DIR]
 ```
 
 ## Limitations
@@ -45,13 +45,13 @@ Search by content:
 
 ```bash
 # Find code
-snapfind search "fn main" ~/code
+snap search "fn main" ~/code
 
 # Find documentation
-snapfind search "# Introduction" ~/docs
+snap search "# Introduction" ~/docs
 
 # Use glob patterns
-snapfind search "*.txt" ~/documents
+snap search "*.txt" ~/documents
 ```
 
 ## License
