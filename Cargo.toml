@@ -1,6 +1,6 @@
 [package]
 name = "snapfind"
-version = "0.1.0"
+version = "1.0.0"
 description = "Fast, memory-efficient file search utility with predictable resource usage"
 edition = "2024"
 authors = ["Success Kingsley <hello@xosnrdev.tech>"]
