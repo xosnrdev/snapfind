@@ -1,9 +1,9 @@
 {
-  description = "Fast, memory-efficient file search utility with predictable resource usage";
+  description =
+    "Fast, memory-efficient file search utility with predictable resource usage";
 
   inputs = {
-    nixpkgs.url =
-      "github:NixOS/nixpkgs?rev=a47b881e04af1dd6d414618846407b2d6c759380";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
   };
 
@@ -29,11 +29,9 @@
           buildInputs = [
             pkgs.cargo-watch
             pkgs.cargo-sort
-            pkgs.git-cliff
             pkgs.cargo-release
             pkgs.cargo-dist
             pkgs.git
-            pkgs.cargo-bloat
           ];
           shellHook = ''
             export RUST_BACKTRACE=1
